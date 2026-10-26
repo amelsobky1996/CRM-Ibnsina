@@ -1,4 +1,4 @@
-// Ibnsina Digital Tasks Tracker — admin-users Edge Function
+// Ibnsina Digital Team Tasks Tracker — admin-users Edge Function
 // إنشاء الحسابات، تغيير كلمة السر، إيقاف/تفعيل، وحذف الموظفين.
 // المدير يقدر يدير اللي تحته فقط، والأدمن يدير الكل.
 // تغيير كلمة سر أي موظف تاني متاح للأدمن (المدير الرئيسي) بس.

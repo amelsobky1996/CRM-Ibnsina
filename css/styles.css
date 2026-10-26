@@ -1,5 +1,5 @@
 /* =====================================================================
-   Ibnsina Digital Tasks Tracker — styles
+   Ibnsina Digital Team Tasks Tracker — styles
    ===================================================================== */
 :root {
   --brand: #0B6FC4;
@@ -155,8 +155,9 @@ textarea.input { min-height: 96px; resize: vertical; }
 /* ---------- App shell ---------- */
 .app { display: grid; grid-template-columns: 276px 1fr; min-height: 100vh; }
 .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 26px 16px 18px; overflow: hidden; }
-.side-logo { width: 148px; margin: 0 10px; }
-.side-product { margin: 6px 10px 30px; font-size: 13px; opacity: .78; letter-spacing: .02em; }
+.side-brand { display: flex; flex-direction: column; align-items: center; text-align: center; margin: 0 0 28px; padding: 0 6px 22px; border-bottom: 1px solid rgba(255,255,255,.14); }
+.side-logo { width: 156px; }
+.side-product { margin-top: 8px; font-size: 13px; font-weight: 600; opacity: .85; letter-spacing: .03em; }
 .nav { display: flex; flex-direction: column; gap: 4px; position: relative; }
 .nav a {
   position: relative; z-index: 1;
@@ -182,6 +183,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 @media (max-width: 960px) {
   .app { grid-template-columns: 1fr; }
   .side { position: sticky; top: 0; z-index: 20; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 14px; gap: 6px; }
+  .side-brand { margin: 0; padding: 0; border: 0; }
   .side-logo { width: 92px; margin: 0; }
   .side-product { display: none; }
   .nav { flex-direction: row; order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -529,3 +531,15 @@ table.t tbody tr:hover td { background: color-mix(in srgb, var(--brand) 5%, tran
 .setup { max-width: 640px; margin: 10vh auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 32px; }
 .setup code { background: var(--card-2); padding: 1px 6px; border-radius: 4px; direction: ltr; unicode-bidi: embed; }
 .tree > ul > li::before, .tree > ul > li::after { display: none; }
+
+/* ---------- Gender ---------- */
+.g-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 99px; white-space: nowrap; }
+.g-male { color: #1C74C9; background: color-mix(in srgb, #1C74C9 13%, transparent); }
+.g-female { color: #C2408A; background: color-mix(in srgb, #C2408A 13%, transparent); }
+.seg { display: flex; gap: 6px; background: var(--card-2); border: 1px solid var(--line); border-radius: 10px; padding: 4px; min-height: 44px; }
+.seg label { flex: 1; cursor: pointer; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span { display: flex; align-items: center; justify-content: center; gap: 4px; height: 100%; min-height: 34px; border-radius: 7px; font-weight: 600; font-size: 14px; color: var(--ink-2); transition: background .2s, color .2s, box-shadow .2s; }
+.seg label:hover span { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+.seg input:checked + span { background: linear-gradient(180deg, var(--brand-hi), var(--brand)); color: #fff; box-shadow: 0 4px 10px -4px var(--brand-glow); }
+.seg input:focus-visible + span { outline: 2px solid var(--brand-hi); outline-offset: 2px; }

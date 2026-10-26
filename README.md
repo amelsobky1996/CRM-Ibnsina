@@ -1,4 +1,4 @@
-# Ibnsina Digital Tasks Tracker
+# Ibnsina Digital Team Tasks Tracker
 
 نظام إدارة مهام لفريق Ibnsina Pharma (حوالي 20 موظف) بهيكل إداري (مدير ومرؤوس).
 

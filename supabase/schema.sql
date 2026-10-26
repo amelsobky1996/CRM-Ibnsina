@@ -300,3 +300,6 @@ do $$ begin
 end $$;
 
 update storage.buckets set file_size_limit = 52428800 where id = 'task-files';
+
+-- v3: النوع (gender)
+alter table public.profiles add column if not exists gender text check (gender in ('male','female'));

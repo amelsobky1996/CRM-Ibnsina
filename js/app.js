@@ -12,6 +12,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const MAX_FILE_MB = 50;
 const STATUS = { todo: "جديدة", in_progress: "قيد التنفيذ", review: "مراجعة", blocked: "متوقفة", done: "مكتملة" };
 const PRIORITY = { high: "عالية", medium: "متوسطة", low: "منخفضة" };
+const GENDER = { male: "ذكر", female: "أنثى" };
+const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "♀" : "♂"} ${GENDER[g]}</span>` : `<span class="meta" style="margin:0">—</span>`;
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
@@ -282,7 +284,7 @@ function renderLogin(message = "") {
         <div class="rays" aria-hidden="true">${rays}</div>
         <img src="assets/logo-white.png" alt="Ibnsina Pharma">
         <div class="copy">
-          <h1>Digital Tasks Tracker</h1>
+          <h1>Digital Team Tasks Tracker</h1>
           <p>المشاريع والمهام والمواعيد والملفات في مكان واحد، وكل مدير شايف أداء فريقه أول بأول.</p>
         </div>
       </section>
@@ -328,8 +330,10 @@ function renderShell() {
   $("#root").innerHTML = `
     <div class="app">
       <aside class="side brand-bg">
-        <img class="side-logo" src="assets/logo-white.png" alt="Ibnsina Pharma">
-        <div class="side-product">Digital Tasks Tracker</div>
+        <div class="side-brand">
+          <img class="side-logo" src="assets/logo-white.png" alt="Ibnsina Pharma">
+          <div class="side-product">Digital Team Tasks Tracker</div>
+        </div>
         <nav class="nav" id="nav" aria-label="القائمة الرئيسية"></nav>
         <div class="side-me" id="side-me"></div>
       </aside>
@@ -1124,7 +1128,7 @@ function renderOrg() {
     ].join("");
     return `<li class="${isCol ? "collapsed" : ""}" style="--d:${depth}">
       <div class="org-card ${p.id === me ? "me" : ""} ${p.active ? "" : "inactive"} ${canSeeWork(p) ? "link" : ""}" data-person="${p.id}" ${canSeeWork(p) ? 'tabindex="0" role="link"' : ""} dir="rtl">
-        ${p.id === me ? `<span class="me-tag">أنت</span>` : ""}
+        ${p.id === me ? `<span class="me-tag">${p.gender === "female" ? "أنتِ" : "أنت"}</span>` : ""}
         ${avatar(p, "lg")}
         <b>${esc(p.full_name)}</b>
         <small>${esc(p.job_title || "—")}</small>
@@ -1226,11 +1230,12 @@ function renderUsers() {
       <button class="btn primary" id="add-user">${icon("plus")}إضافة موظف</button>
     </div>
     ${list.length ? `<div class="table-wrap"><table class="t">
-      <thead><tr><th>الموظف</th><th>اسم المستخدم</th><th>المدير المباشر</th><th>الحالة</th><th></th></tr></thead>
+      <thead><tr><th>الموظف</th><th>اسم المستخدم</th><th>النوع</th><th>المدير المباشر</th><th>الحالة</th><th></th></tr></thead>
       <tbody>${list.map((p) => `
         <tr class="${p.active ? "" : "inactive"}">
           <td><div class="person">${avatar(p)}<div><b>${esc(p.full_name)}${p.is_admin ? ` <span class="pill s-review">أدمن</span>` : ""}</b><small>${esc(p.job_title || "")}</small></div></div></td>
           <td dir="ltr" style="text-align:start">${esc(p.username)}</td>
+          <td>${genderPill(p.gender)}</td>
           <td>${esc(profile(p.manager_id)?.full_name || "—")}</td>
           <td>${p.active ? `<span class="pill s-done">نشط</span>` : `<span class="pill s-blocked">موقوف</span>`}</td>
           <td><button class="btn sm" data-edit="${p.id}">${icon("edit", "sm")}تعديل</button></td>
@@ -1260,7 +1265,13 @@ function openUserModal(user = null) {
         <button type="button" class="btn sm" id="uf-photo">${user?.avatar_url ? "تغيير الصورة" : "إضافة صورة"}</button>
       </div>
       <label class="field"><span>الاسم بالكامل</span><input class="input" name="full_name" value="${esc(user?.full_name || "")}" required></label>
-      <label class="field"><span>المسمى الوظيفي</span><input class="input" name="job_title" value="${esc(user?.job_title || "")}"></label>
+      <div class="row2">
+        <label class="field"><span>المسمى الوظيفي</span><input class="input" name="job_title" value="${esc(user?.job_title || "")}"></label>
+        <div class="field"><span>النوع</span>
+          <div class="seg" role="radiogroup" aria-label="النوع">
+            ${Object.entries(GENDER).map(([k, l]) => `<label><input type="radio" name="gender" value="${k}" ${user?.gender === k ? "checked" : ""}><span>${k === "female" ? "♀" : "♂"} ${l}</span></label>`).join("")}
+          </div></div>
+      </div>
       <label class="field"><span>المدير المباشر</span><select class="input" name="manager_id">${managerOptions(user)}</select></label>
       ${isNew ? `
       <div class="row2">
@@ -1292,6 +1303,8 @@ function openUserModal(user = null) {
     const full_name = String(f.get("full_name")).trim();
     const job_title = String(f.get("job_title")).trim() || null;
     const manager_id = f.get("manager_id") || null;
+    const gender = f.get("gender") || null;
+    if (!gender) return err("اختار النوع");
     if (!full_name) return err("اكتب الاسم");
     const btn = e.submitter; btn.disabled = true;
     try {
@@ -1303,8 +1316,10 @@ function openUserModal(user = null) {
         if (password.length < 8) throw new Error("كلمة السر 8 حروف على الأقل");
         const r = await adminCall({ action: "create", username, password, full_name, job_title, manager_id });
         id = r.id;
+        const { error: ge } = await sb.from("profiles").update({ gender }).eq("id", id);
+        if (ge) throw ge;
       } else {
-        const { error } = await sb.from("profiles").update({ full_name, job_title, manager_id }).eq("id", id);
+        const { error } = await sb.from("profiles").update({ full_name, job_title, manager_id, gender }).eq("id", id);
         if (error) throw error;
       }
       if (state.me.is_admin && f.has("is_admin") !== !!user?.is_admin && (!user || user.id !== state.me.id)) {
