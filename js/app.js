@@ -34,6 +34,11 @@ const ICONS = {
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+  zoomIn: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6M11 8v6"/>',
+  zoomOut: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  collapse: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -138,6 +143,8 @@ function canManageTask(t) {
     t.assignees.some((u) => isAncestor(me, u));
 }
 const canWorkOn = (t) => canManageTask(t) || t.assignees.includes(state.me.id);
+// must mirror the "tasks delete" RLS policy
+const canDeleteTask = (t) => state.me.is_admin || t.created_by === state.me.id || (t.created_by && isAncestor(state.me.id, t.created_by));
 const canEditProject = (p) => state.me.is_admin || p.created_by === state.me.id || p.lead_id === state.me.id ||
   (p.created_by && isAncestor(state.me.id, p.created_by));
 
@@ -515,18 +522,19 @@ function renderTasks() {
       <div class="input-icon search">${icon("search", "sm")}<input class="input" id="q" type="search" placeholder="ابحث في المهام" value="${esc(v.q)}"></div>
     </div>
     <div class="list ${state.animate ? "stagger" : ""}">
-      ${list.length ? `<div class="list-head"><span>الحالة</span><span>المهمة</span><span>المسؤولين</span><span>الموعد</span><span>الإنجاز</span></div>` : ""}
+      ${list.length ? `<div class="list-head"><span>الحالة</span><span>المهمة</span><span>المسؤولين</span><span>الموعد</span><span>الإنجاز</span><span></span></div>` : ""}
       ${list.map((t, i) => {
         const p = project(t.project_id);
         return `
-        <button class="task-row ${t.status === "done" ? "done" : ""}" data-id="${t.id}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
+        <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
           <span class="pill s-${t.status}">${STATUS[t.status]}</span>
           <span class="t-title"><b>${esc(t.title)}</b>
             <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span>من ${esc(profile(t.created_by)?.full_name || "—")}</span></small></span>
           ${avatarsCell(t.assignees)}
           ${deadlineCell(t)}
           ${progressCell(t)}
-        </button>`;
+          <span class="row-actions">${canDeleteTask(t) ? `<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="حذف المهمة ${esc(t.title)}">${icon("trash", "sm")}</button>` : ""}</span>
+        </div>`;
       }).join("") || `<div class="empty"><div class="ill">${icon("tasks")}</div><b>مفيش مهام هنا</b>${v.tab === "mine" && v.status === "all" && !v.project ? "أي مهمة تتسند لك هتظهر في القائمة دي." : "غيّر الفلتر أو أضف مهمة جديدة."}</div>`}
     </div>`;
 
@@ -541,7 +549,15 @@ function renderTasks() {
     v.status = v.status === b.dataset.st && b.classList.contains("stat") ? "all" : b.dataset.st;
     state.animate = true; renderTasks(); afterRender();
   });
-  $$(".task-row").forEach((b) => b.onclick = () => openTask(b.dataset.id));
+  $$(".task-row").forEach((r) => {
+    r.onclick = (e) => { if (!e.target.closest("[data-del]")) openTask(r.dataset.id); };
+    r.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === r) { e.preventDefault(); openTask(r.dataset.id); } };
+  });
+  $$("[data-del]").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const t = state.tasks.find((x) => x.id === b.dataset.del);
+    if (t) deleteTask(t, b.closest(".task-row"));
+  });
   $("#proj-filter").onchange = (e) => {
     const qs = new URLSearchParams();
     if (v.user) qs.set("user", v.user);
@@ -766,7 +782,7 @@ function openTask(id) {
 
       ${work ? `<p class="err" id="td-err" style="margin-top:16px"></p>
       <div class="modal-foot">
-        ${manage ? `<button type="button" class="btn danger ghost" id="del-task">حذف المهمة</button><span class="spacer"></span>` : ""}
+        ${canDeleteTask(t) ? `<button type="button" class="btn danger ghost" id="del-task">${icon("trash", "sm")}حذف المهمة</button>` : ""}${manage ? `<span class="spacer"></span>` : ""}
         <button class="btn primary" type="submit">حفظ التغييرات</button>
       </div>` : ""}
     </form>
@@ -806,14 +822,7 @@ function openTask(id) {
   }
 
   const del = $("#del-task", ov);
-  if (del) del.onclick = async () => {
-    if (!confirm("حذف المهمة نهائيًا بكل ملفاتها؟")) return;
-    const { data: files } = await sb.from("task_files").select("storage_path").eq("task_id", t.id);
-    if (files?.length) await sb.storage.from("task-files").remove(files.map((f) => f.storage_path));
-    const { error } = await sb.from("tasks").delete().eq("id", t.id);
-    if (error) return toast(friendly(error), true);
-    await loadTasks(); closeModal(); route(); toast("اتحذفت المهمة");
-  };
+  if (del) del.onclick = () => deleteTask(t);
 
   const form = $("#td", ov);
   if (!work) return;
@@ -848,6 +857,58 @@ function openTask(id) {
       tdErr(friendly(ex)); btn.disabled = false;
     }
   };
+}
+
+/* ---------- Confirm + delete ---------- */
+function confirmDialog({ title, body = "", ok = "تأكيد", danger = true }) {
+  return new Promise((resolve) => {
+    const root = document.createElement("div");
+    root.className = "overlay confirm-layer";
+    root.setAttribute("role", "alertdialog");
+    root.setAttribute("aria-modal", "true");
+    root.innerHTML = `<div class="modal confirm">
+        <div class="confirm-ico ${danger ? "bad" : ""}">${icon(danger ? "trash" : "alert")}</div>
+        <h2></h2><p></p>
+        <div class="modal-foot"><button class="btn ghost" data-no>إلغاء</button><button class="btn ${danger ? "btn-danger" : "primary"}" data-yes></button></div>
+      </div>`;
+    $("h2", root).textContent = title;
+    $("p", root).textContent = body;
+    $("[data-yes]", root).textContent = ok;
+    document.body.append(root);
+    const done = (v) => {
+      document.removeEventListener("keydown", onKey, true);
+      root.classList.add("closing");
+      setTimeout(() => root.remove(), reduceMotion ? 0 : 180);
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(false); } };
+    document.addEventListener("keydown", onKey, true);
+    root.addEventListener("mousedown", (e) => { if (e.target === root) done(false); });
+    $("[data-no]", root).onclick = () => done(false);
+    $("[data-yes]", root).onclick = () => done(true);
+    setTimeout(() => $("[data-no]", root).focus(), 50);
+  });
+}
+
+async function deleteTask(t, rowEl = null) {
+  const ok = await confirmDialog({ title: "حذف المهمة؟", body: `«${t.title}» هتتحذف نهائيًا مع كل ملفاتها.`, ok: "حذف المهمة" });
+  if (!ok) return;
+  rowEl?.classList.add("removing");
+  try {
+    const { data: files } = await sb.from("task_files").select("storage_path").eq("task_id", t.id);
+    const { data: gone, error } = await sb.from("tasks").delete().eq("id", t.id).select("id");
+    if (error) throw error;
+    if (!gone?.length) throw new Error("مش مسموح لك تحذف المهمة دي، اللي أنشأها أو مديره بس");
+    if (files?.length) await sb.storage.from("task-files").remove(files.map((f) => f.storage_path));
+  } catch (e) {
+    rowEl?.classList.remove("removing");
+    return toast(friendly(e), true);
+  }
+  if (rowEl && !reduceMotion) await new Promise((r) => setTimeout(r, 280));
+  state.tasks = state.tasks.filter((x) => x.id !== t.id);
+  if ($("#modal-root .overlay")) closeModal();
+  route();
+  toast("اتحذفت المهمة");
 }
 
 /* =====================================================================
@@ -1041,16 +1102,117 @@ function renderTeam() {
    Org chart
    ===================================================================== */
 function renderOrg() {
+  const me = state.me.id;
   const roots = state.profiles.filter((p) => !p.manager_id || !profile(p.manager_id));
+  const collapsed = state.orgCollapsed || (state.orgCollapsed = new Set());
+  const canSeeWork = (p) => p.id === me || state.me.is_admin || isAncestor(me, p.id);
+  const levels = [];
+
   const node = (p, depth = 0) => {
-    const kids = state.children.get(p.id) || [];
     if (depth > 30) return "";
-    return `<li><span class="node ${p.id === state.me.id ? "me" : ""} ${p.active ? "" : "inactive"}">${avatar(p, "sm")}<span><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></span></span>
-      ${kids.length ? `<ul>${kids.map((k) => node(k, depth + 1)).join("")}</ul>` : ""}</li>`;
+    (levels[depth] = levels[depth] || []).push(p);
+    const kids = [...(state.children.get(p.id) || [])].sort((a, b) =>
+      (state.children.get(b.id)?.length || 0) - (state.children.get(a.id)?.length || 0) || a.full_name.localeCompare(b.full_name, "ar"));
+    const team = descendants(p.id).length;
+    const isCol = collapsed.has(p.id) && kids.length;
+    const open = canSeeWork(p) ? state.tasks.filter((t) => t.assignees.includes(p.id) && t.status !== "done").length : null;
+    const late = canSeeWork(p) ? state.tasks.filter((t) => t.assignees.includes(p.id) && isOverdue(t)).length : 0;
+    const stats = [
+      team ? `<span title="عدد الفريق">${icon("users", "sm")}${team}</span>` : "",
+      open !== null ? `<span title="مهام مفتوحة">${icon("inbox", "sm")}${open}</span>` : "",
+      late ? `<span class="bad" title="متأخرة">${icon("flame", "sm")}${late}</span>` : "",
+    ].join("");
+    return `<li class="${isCol ? "collapsed" : ""}" style="--d:${depth}">
+      <div class="org-card ${p.id === me ? "me" : ""} ${p.active ? "" : "inactive"} ${canSeeWork(p) ? "link" : ""}" data-person="${p.id}" ${canSeeWork(p) ? 'tabindex="0" role="link"' : ""} dir="rtl">
+        ${p.id === me ? `<span class="me-tag">أنت</span>` : ""}
+        ${avatar(p, "lg")}
+        <b>${esc(p.full_name)}</b>
+        <small>${esc(p.job_title || "—")}</small>
+        ${stats ? `<div class="org-stats">${stats}</div>` : ""}
+      </div>
+      ${kids.length ? `<button class="org-toggle" data-toggle="${p.id}" aria-expanded="${!isCol}" aria-label="${isCol ? "إظهار" : "إخفاء"} فريق ${esc(p.full_name)}">${isCol ? `+${team}` : "−"}</button>
+        <ul>${kids.map((k) => node(k, depth + 1)).join("")}</ul>` : ""}
+    </li>`;
   };
+  const treeHtml = roots.map((r) => node(r)).join("");
+  const managers = state.profiles.filter((p) => (state.children.get(p.id) || []).length).length;
+
   $("#view").innerHTML = `
-    <div class="page-head"><div><h1>الهيكل التنظيمي</h1><p>${state.profiles.length} موظف</p></div></div>
-    <div class="org"><ul>${roots.map((r) => node(r)).join("")}</ul></div>`;
+    <div class="page-head">
+      <div><h1>الهيكل التنظيمي</h1><p>${state.profiles.length} موظف · ${managers} مدير · ${levels.length} مستويات</p></div>
+      <div class="org-tools">
+        <button class="btn sm" id="org-expand">${icon("expand", "sm")}فتح الكل</button>
+        <button class="btn sm" id="org-collapse">${icon("collapse", "sm")}طي الكل</button>
+        <span class="zoom">
+          <button class="icon-btn" id="zoom-out" aria-label="تصغير">${icon("zoomOut", "sm")}</button>
+          <output id="zoom-val">${Math.round((state.orgZoom || 1) * 100)}%</output>
+          <button class="icon-btn" id="zoom-in" aria-label="تكبير">${icon("zoomIn", "sm")}</button>
+        </span>
+      </div>
+    </div>
+    <div class="org-viewport" id="org-vp" dir="ltr">
+      <div class="tree ${state.animate ? "grow" : ""}" id="org-tree" style="zoom:${state.orgZoom || 1}"><ul>${treeHtml}</ul></div>
+    </div>
+    <p class="meta" style="margin-top:10px">اسحب بالماوس عشان تتحرك في الهيكل، واضغط على أي شخص في فريقك عشان تشوف مهامه.</p>`;
+
+  const vp = $("#org-vp"), tree = $("#org-tree");
+  const center = () => { vp.scrollLeft = Math.max(0, (vp.scrollWidth - vp.clientWidth) / 2); };
+  requestAnimationFrame(() => {
+    if (!state.orgZoom) {
+      const natural = tree.scrollWidth;
+      const fit = natural > vp.clientWidth ? Math.max(.5, Math.floor((vp.clientWidth / natural) * 10) / 10) : 1;
+      tree.style.zoom = fit;
+      $("#zoom-val").textContent = Math.round(fit * 100) + "%";
+      state.orgZoomFit = fit;
+    }
+    center();
+  });
+
+  $$("[data-toggle]", vp).forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const id = b.dataset.toggle, li = b.closest("li");
+    const nowCol = !li.classList.contains("collapsed");
+    li.classList.toggle("collapsed", nowCol);
+    nowCol ? collapsed.add(id) : collapsed.delete(id);
+    b.setAttribute("aria-expanded", String(!nowCol));
+    b.textContent = nowCol ? `+${descendants(id).length}` : "−";
+  });
+  $("#org-expand").onclick = () => { collapsed.clear(); state.animate = true; route(); };
+  $("#org-collapse").onclick = () => {
+    roots.forEach((r) => (state.children.get(r.id) || []).forEach((k) => { if ((state.children.get(k.id) || []).length) collapsed.add(k.id); }));
+    state.animate = true; route();
+  };
+  const setZoom = (z) => {
+    state.orgZoom = Math.min(1.4, Math.max(.5, Math.round(z * 10) / 10));
+    tree.style.zoom = state.orgZoom;
+    $("#zoom-val").textContent = Math.round(state.orgZoom * 100) + "%";
+  };
+  const cur = () => state.orgZoom || state.orgZoomFit || 1;
+  $("#zoom-in").onclick = () => { setZoom(cur() + .1); center(); };
+  $("#zoom-out").onclick = () => { setZoom(cur() - .1); center(); };
+
+  $$(".org-card.link", vp).forEach((c) => {
+    const go = () => { location.hash = `#/tasks?user=${c.dataset.person}`; };
+    c.onclick = () => { if (!vp.dataset.dragged) go(); };
+    c.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  });
+
+  // drag to pan
+  let drag = null;
+  vp.onpointerdown = (e) => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    drag = { x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop, moved: false };
+    delete vp.dataset.dragged;
+  };
+  vp.onpointermove = (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+    drag.moved = true; vp.classList.add("dragging"); vp.dataset.dragged = "1";
+    vp.scrollLeft = drag.l - dx; vp.scrollTop = drag.t - dy;
+  };
+  const end = () => { drag = null; vp.classList.remove("dragging"); setTimeout(() => delete vp.dataset.dragged, 60); };
+  vp.onpointerup = end; vp.onpointerleave = end;
 }
 
 /* =====================================================================
