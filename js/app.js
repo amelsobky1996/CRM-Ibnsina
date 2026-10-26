@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_DOMAIN } from "./config.js";
+import { tx, LANG, THEME, LOCALE, startTranslator, applyPrefs, setLang, setTheme } from "./i18n.js";
 
 /* =====================================================================
    Helpers
@@ -36,6 +37,10 @@ const ICONS = {
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.7 4.7 0 0 0 21 9.7C21 5.9 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7" r="1.2"/><circle cx="14.5" cy="7" r="1.2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   zoomIn: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6M11 8v6"/>',
   zoomOut: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6"/>',
@@ -45,8 +50,8 @@ const ICONS = {
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
 const fmtDate = (d) => d ? new Date(d.length === 10 ? d + "T00:00:00" : d)
-  .toLocaleDateString("ar-EG", { day: "numeric", month: "short", year: "numeric" }) : "";
-const fmtDateTime = (d) => d ? new Date(d).toLocaleString("ar-EG",
+  .toLocaleDateString(LOCALE(), { day: "numeric", month: "short", year: "numeric" }) : "";
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString(LOCALE(),
   { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
 const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 const daysUntil = (dateStr) => Math.round((new Date(dateStr + "T00:00:00") - today()) / 86400000);
@@ -236,7 +241,7 @@ async function uploadAvatar(userId, file) {
 const friendly = (e) => {
   const m = e?.message || String(e);
   if (/row-level security/i.test(m)) return "مش مسموح لك تعمل الخطوة دي";
-  if (/exceeded the maximum allowed size|Payload too large/i.test(m)) return `الملف أكبر من ${MAX_FILE_MB} ميجا`;
+  if (/exceeded the maximum allowed size|Payload too large/i.test(m)) return tx("الملف أكبر من {mb} ميجا", { mb: MAX_FILE_MB });
   return m;
 };
 
@@ -244,6 +249,8 @@ const friendly = (e) => {
    Boot / Auth
    ===================================================================== */
 async function init() {
+  applyPrefs();
+  startTranslator();
   if (!configured) return renderSetup();
   const { data: { session } } = await sb.auth.getSession();
   sb.auth.onAuthStateChange((evt) => { if (evt === "SIGNED_OUT") renderLogin(); });
@@ -311,6 +318,7 @@ function renderLogin(message = "") {
         </div>
       </section>
       <section class="login-form">
+        <button type="button" class="lang-switch" id="lang-switch">${icon("globe", "sm")}<span>${LANG === "en" ? "العربية" : "English"}</span></button>
         <form id="login" novalidate>
           <h2>تسجيل الدخول</h2>
           <p class="sub">استخدم اسم المستخدم وكلمة السر اللي اداهولك مديرك.</p>
@@ -323,6 +331,7 @@ function renderLogin(message = "") {
         </form>
       </section>
     </div>`;
+  $("#lang-switch").onclick = () => { setLang(LANG === "en" ? "ar" : "en"); renderLogin(); };
   $("#login").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -375,6 +384,7 @@ function renderNav() {
   if (isManager()) items.push(["team", "أداء الفريق", "team"]);
   items.push(["org", "الهيكل التنظيمي", "org"]);
   if (isManager()) items.push(["users", "الموظفين", "users"]);
+  items.push(["settings", "الإعدادات", "settings"]);
   $("#nav").innerHTML = items.map(([k, label, ic, n]) =>
     `<a href="#/${k}" class="${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${n ? `<span class="count">${n}</span>` : ""}</a>`).join("");
   const me = state.me;
@@ -402,7 +412,8 @@ function route() {
   const { page, params } = currentRoute();
   renderNav();
   const view = $("#view");
-  if (page === "projects") renderProjects();
+  if (page === "settings") renderSettings();
+  else if (page === "projects") renderProjects();
   else if (page === "team" && isManager()) renderTeam();
   else if (page === "org") renderOrg();
   else if (page === "users" && isManager()) renderUsers();
@@ -461,7 +472,7 @@ function deadlineCell(t) {
   if (t.status === "done") return `<span class="t-deadline">${icon("calendar", "sm")}${fmtDate(t.deadline)}</span>`;
   const d = daysUntil(t.deadline);
   const cls = d < 0 ? "overdue" : d <= 2 ? "soon" : "";
-  const label = d < 0 ? `متأخرة ${-d} يوم` : d === 0 ? "النهارده" : d === 1 ? "بكرة" : fmtDate(t.deadline);
+  const label = d < 0 ? tx("متأخرة {n} يوم", { n: -d }) : d === 0 ? "النهارده" : d === 1 ? "بكرة" : fmtDate(t.deadline);
   return `<span class="t-deadline ${cls}" title="${fmtDate(t.deadline)}">${icon(d < 0 ? "flame" : "calendar", "sm")}${label}</span>`;
 }
 
@@ -478,7 +489,7 @@ const projChip = (p) => p ? `<span class="proj-chip" style="--c:${esc(p.color)}"
 function projectOptions(selected, { includeArchivedId = null, emptyLabel = "بدون مشروع" } = {}) {
   const list = state.projects.filter((p) => p.status === "active" || p.id === includeArchivedId);
   return `<option value="">${emptyLabel}</option>` +
-    list.map((p) => `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}${p.status === "archived" ? " (مؤرشف)" : ""}</option>`).join("");
+    list.map((p) => `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}${p.status === "archived" ? " " + tx("(مؤرشف)") : ""}</option>`).join("");
 }
 
 function renderTasks() {
@@ -523,7 +534,7 @@ function renderTasks() {
   $("#view").innerHTML = `
     <div class="page-head">
       <div><h1>${filterProj ? esc(filterProj.name) : "المهام"}</h1>
-        <p>${filterProj ? esc(filterProj.description || "مهام المشروع") : `أهلاً ${esc(firstName)}، عندك ${myOpen} مهمة مفتوحة.`}</p></div>
+        <p>${filterProj ? esc(filterProj.description || "مهام المشروع") : tx("أهلاً {name}، عندك {n} مهمة مفتوحة.", { name: esc(firstName), n: myOpen })}</p></div>
       <button class="btn primary" id="new-task">${icon("plus")}مهمة جديدة</button>
     </div>
     <div class="stats">
@@ -536,7 +547,7 @@ function renderTasks() {
       <div class="tabs" role="tablist"><span class="pill-bg"></span>
         ${tabs.map(([k, l]) => `<button role="tab" aria-selected="${v.tab === k}" data-tab="${k}" class="${v.tab === k ? "on" : ""}">${l}<span class="n">${tasksForTab(k).length}</span></button>`).join("")}
       </div>
-      ${filterUser ? `<span class="filter-tag">مهام ${esc(filterUser.full_name)} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span>` : ""}
+      ${filterUser ? `<span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span>` : ""}
     </div>
     <div class="toolbar">
       <div class="chips">
@@ -555,11 +566,11 @@ function renderTasks() {
         <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
           <span class="pill s-${t.status}">${STATUS[t.status]}</span>
           <span class="t-title"><b>${esc(t.title)}</b>
-            <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span>من ${esc(profile(t.created_by)?.full_name || "—")}</span></small></span>
+            <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
           ${avatarsCell(t.assignees)}
           ${deadlineCell(t)}
           ${progressCell(t)}
-          <span class="row-actions">${canDeleteTask(t) ? `<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="حذف المهمة ${esc(t.title)}">${icon("trash", "sm")}</button>` : ""}</span>
+          <span class="row-actions">${canDeleteTask(t) ? `<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="${tx("حذف المهمة {title}", { title: esc(t.title) })}">${icon("trash", "sm")}</button>` : ""}</span>
         </div>`;
       }).join("") || `<div class="empty"><div class="ill">${icon("tasks")}</div><b>مفيش مهام هنا</b>${v.tab === "mine" && v.status === "all" && !v.project ? "أي مهمة تتسند لك هتظهر في القائمة دي." : "غيّر الفلتر أو أضف مهمة جديدة."}</div>`}
     </div>`;
@@ -645,7 +656,7 @@ function peoplePicker(selected) {
       ${people.map((p) => `
         <label data-name="${esc(p.full_name.toLowerCase())}">
           <input type="checkbox" name="assignee" value="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
-          ${avatar(p, "sm")}<span>${esc(p.full_name)}${p.id === me ? " (أنا)" : ""}</span>
+          ${avatar(p, "sm")}<span>${esc(p.full_name)}${p.id === me ? " " + tx("(أنا)") : ""}</span>
           <small>${esc(p.job_title || "")}</small>
         </label>`).join("")}
     </div>`;
@@ -660,7 +671,7 @@ function wirePeopleSearch(root) {
 }
 
 function checkFileSize(file) {
-  if (file.size > MAX_FILE_MB * 1048576) throw new Error(`${file.name}: الحد الأقصى ${MAX_FILE_MB} ميجا للملف`);
+  if (file.size > MAX_FILE_MB * 1048576) throw new Error(tx("{file}: الحد الأقصى {mb} ميجا للملف", { file: file.name, mb: MAX_FILE_MB }));
 }
 
 /* ---------- New task ---------- */
@@ -677,7 +688,7 @@ function openNewTask() {
           <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       </div>
       <div class="field"><span>إسناد إلى</span>${peoplePicker([state.me.id])}</div>
-      <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">إرفاق ملفات (اختياري، حتى ${MAX_FILE_MB} ميجا للملف)</span><input type="file" multiple name="files"></label>
+      <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">${tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB })}</span><input type="file" multiple name="files"></label>
       <div id="nt-progress"></div>
       <p class="err" id="nt-err"></p>
       <div class="modal-foot">
@@ -689,7 +700,7 @@ function openNewTask() {
   $("[data-close]", ov).onclick = closeModal;
   const fileInput = $("#nt input[name=files]");
   fileInput.onchange = () => {
-    $("#nt-files").textContent = fileInput.files.length ? [...fileInput.files].map((f) => f.name).join("، ") : `إرفاق ملفات (اختياري، حتى ${MAX_FILE_MB} ميجا للملف)`;
+    $("#nt-files").textContent = fileInput.files.length ? [...fileInput.files].map((f) => f.name).join("، ") : tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB });
   };
   const err = (m) => { $("#nt-err").textContent = ""; requestAnimationFrame(() => $("#nt-err").textContent = m); };
   $("#nt").onsubmit = async (e) => {
@@ -761,7 +772,7 @@ async function renderFiles(taskId, box) {
   });
   $$("[data-rm]", box).forEach((b) => b.onclick = async () => {
     const f = data.find((x) => x.id === b.dataset.rm);
-    if (!confirm(`حذف "${f.file_name}"؟`)) return;
+    if (!confirm(tx("حذف «{name}»؟", { name: f.file_name }))) return;
     await sb.storage.from("task-files").remove([f.storage_path]);
     const { error: e } = await sb.from("task_files").delete().eq("id", f.id);
     if (e) return toast(friendly(e), true);
@@ -775,7 +786,7 @@ function openTask(id) {
   if (!t) return toast("المهمة مش موجودة", true);
   const manage = canManageTask(t), work = canWorkOn(t);
   const creator = profile(t.created_by);
-  const dropText = `اسحب الملفات هنا أو اضغط للاختيار (حتى ${MAX_FILE_MB} ميجا)`;
+  const dropText = tx("اسحب الملفات هنا أو اضغط للاختيار (حتى {mb} ميجا)", { mb: MAX_FILE_MB });
   const ov = openModal(`
     <div class="panel-top">
       <span class="pill s-${t.status}">${STATUS[t.status]}</span>
@@ -783,7 +794,7 @@ function openTask(id) {
     </div>
     <form id="td">
       <input class="title-input" name="title" value="${esc(t.title)}" ${manage ? "" : "disabled"} aria-label="عنوان المهمة" maxlength="200">
-      <div class="meta">أنشأها ${esc(creator?.full_name || "—")} · ${fmtDateTime(t.created_at)}${t.completed_at ? ` · اكتملت ${fmtDateTime(t.completed_at)}` : ""}</div>
+      <div class="meta">${tx("أنشأها {name} · {date}", { name: esc(creator?.full_name || "—"), date: fmtDateTime(t.created_at) })}${t.completed_at ? " · " + tx("اكتملت {date}", { date: fmtDateTime(t.completed_at) }) : ""}</div>
 
       <label class="field"><span>المشروع</span>
         <select class="input" name="project_id" ${manage ? "" : "disabled"}>${projectOptions(t.project_id, { includeArchivedId: t.project_id })}</select></label>
@@ -917,7 +928,7 @@ function confirmDialog({ title, body = "", ok = "تأكيد", danger = true }) {
 }
 
 async function deleteTask(t, rowEl = null) {
-  const ok = await confirmDialog({ title: "حذف المهمة؟", body: `«${t.title}» هتتحذف نهائيًا مع كل ملفاتها.`, ok: "حذف المهمة" });
+  const ok = await confirmDialog({ title: "حذف المهمة؟", body: tx("«{title}» هتتحذف نهائيًا مع كل ملفاتها.", { title: t.title }), ok: "حذف المهمة" });
   if (!ok) return;
   rowEl?.classList.add("removing");
   try {
@@ -965,7 +976,7 @@ function renderProjects() {
 
   $("#view").innerHTML = `
     <div class="page-head">
-      <div><h1>المشاريع</h1><p>${active.length} مشروع نشط${archived.length ? ` · ${archived.length} مؤرشف` : ""}</p></div>
+      <div><h1>المشاريع</h1><p>${tx("{n} مشروع نشط", { n: active.length })}${archived.length ? " · " + tx("{n} مؤرشف", { n: archived.length }) : ""}</p></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         ${archived.length ? `<label class="check" style="margin:0"><input type="checkbox" id="show-arch" ${state.showArchived ? "checked" : ""}> إظهار المؤرشفة</label>` : ""}
         ${canCreate ? `<button class="btn primary" id="new-proj">${icon("plus")}مشروع جديد</button>` : ""}
@@ -984,12 +995,12 @@ function renderProjects() {
             <div class="grow"><h3>${esc(p.name)}</h3><p>${esc(p.description || (p.status === "archived" ? "مشروع مؤرشف" : "بدون وصف"))}</p></div>
           </div>
           <div class="proj-meta">
-            <span>${icon("inbox", "sm")}${s.open} مفتوحة</span>
-            <span>${icon("check", "sm")}${s.done} مكتملة</span>
-            ${s.overdue ? `<span class="bad">${icon("flame", "sm")}${s.overdue} متأخرة</span>` : ""}
+            <span>${icon("inbox", "sm")}${tx("{n} مفتوحة", { n: s.open })}</span>
+            <span>${icon("check", "sm")}${tx("{n} مكتملة", { n: s.done })}</span>
+            ${s.overdue ? `<span class="bad">${icon("flame", "sm")}${tx("{n} متأخرة", { n: s.overdue })}</span>` : ""}
           </div>
           <div class="proj-foot">
-            <span>${lead ? `المسؤول: ${esc(lead.full_name)}` : "بدون مسؤول"}</span>
+            <span>${lead ? tx("المسؤول: {name}", { name: esc(lead.full_name) }) : "بدون مسؤول"}</span>
             <span class="avatars">${ppl.slice(0, 5).map((x) => avatar(x, "sm")).join("")}${ppl.length > 5 ? `<span class="more">+${ppl.length - 5}</span>` : ""}</span>
           </div>
         </div>`;
@@ -1057,12 +1068,71 @@ function openProjectModal(p = null) {
   const del = $("#del-proj", ov);
   if (del) del.onclick = async () => {
     const n = state.tasks.filter((t) => t.project_id === p.id).length;
-    if (!confirm(`حذف مشروع "${p.name}"؟${n ? ` المهام (${n}) مش هتتحذف، هتفضل من غير مشروع.` : ""}`)) return;
+    if (!confirm(tx("حذف مشروع «{name}»؟", { name: p.name }) + (n ? " " + tx("المهام ({n}) مش هتتحذف، هتفضل من غير مشروع.", { n }) : ""))) return;
     const { error } = await sb.from("projects").delete().eq("id", p.id);
     if (error) return err(friendly(error));
     await Promise.all([loadProjects(), loadTasks()]);
     closeModal(); state.animate = true; route(); toast("اتحذف المشروع");
   };
+}
+
+/* =====================================================================
+   Settings (language + theme, saved on this device)
+   ===================================================================== */
+function renderSettings() {
+  const themes = [
+    ["light", "فاتح", ""],
+    ["dark", "داكن", ""],
+    ["system", "حسب الجهاز", "بيتبع إعدادات جهازك تلقائيًا."],
+  ];
+  $("#view").innerHTML = `
+    <div class="page-head"><div><h1>الإعدادات</h1><p>تخصيص شكل ولغة النظام على الجهاز ده.</p></div></div>
+    <div class="settings">
+      <section class="set-card">
+        <div class="set-head"><div class="ico">${icon("globe")}</div><div><h3>اللغة</h3><p>اختار لغة الواجهة.</p></div></div>
+        <div class="choice-grid two" role="radiogroup" aria-label="اللغة">
+          <button class="choice ${LANG === "ar" ? "on" : ""}" data-lang="ar" role="radio" aria-checked="${LANG === "ar"}">
+            <span class="glyph" lang="ar">ع</span><b lang="ar">العربية</b>${LANG === "ar" ? `<span class="tick">${icon("check", "sm")}</span>` : ""}</button>
+          <button class="choice ${LANG === "en" ? "on" : ""}" data-lang="en" role="radio" aria-checked="${LANG === "en"}">
+            <span class="glyph" lang="en">Aa</span><b lang="en">English</b>${LANG === "en" ? `<span class="tick">${icon("check", "sm")}</span>` : ""}</button>
+        </div>
+      </section>
+      <section class="set-card">
+        <div class="set-head"><div class="ico">${icon("palette")}</div><div><h3>المظهر</h3><p>${THEME === "system" ? "بيتبع إعدادات جهازك تلقائيًا." : ""}</p></div></div>
+        <div class="choice-grid three" role="radiogroup" aria-label="المظهر">
+          ${themes.map(([k, l]) => `
+            <button class="choice theme ${THEME === k ? "on" : ""}" data-theme-pick="${k}" role="radio" aria-checked="${THEME === k}">
+              <span class="preview p-${k}" aria-hidden="true"><i class="pv-side"></i><i class="pv-line"></i><i class="pv-line short"></i><i class="pv-card"></i></span>
+              <b>${l}</b>${THEME === k ? `<span class="tick">${icon("check", "sm")}</span>` : ""}</button>`).join("")}
+        </div>
+      </section>
+      <section class="set-card">
+        <div class="set-head"><div class="ico">${icon("user")}</div><div><h3>حسابي</h3><p></p></div></div>
+        <div class="me-row">
+          ${avatar(state.me, "lg")}
+          <div class="grow"><b>${esc(state.me.full_name)}</b><small>${esc(state.me.job_title || "")} · <span dir="ltr">${esc(state.me.username)}</span></small></div>
+          <button class="btn sm" id="set-photo">${icon("user", "sm")}<span>تغيير صورتي</span></button>
+          <button class="btn sm" id="set-pass">${icon("lock", "sm")}<span>تغيير كلمة السر</span></button>
+        </div>
+      </section>
+      <p class="meta">الإعدادات دي محفوظة على الجهاز ده بس.</p>
+    </div>`;
+  $$("[data-lang]").forEach((b) => b.onclick = () => {
+    if (b.dataset.lang === LANG) return;
+    setLang(b.dataset.lang);
+    renderShell();
+    toast(tx("اتحفظت الإعدادات"));
+  });
+  $$("[data-theme-pick]").forEach((b) => b.onclick = () => {
+    setTheme(b.dataset.themePick);
+    state.animate = false; route();
+    toast(tx("اتحفظت الإعدادات"));
+  });
+  $("#set-pass").onclick = () => openPasswordModal(state.me);
+  $("#set-photo").onclick = () => pickFile("image/*", async (file) => {
+    try { await uploadAvatar(state.me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
+    catch (e) { toast(friendly(e), true); }
+  });
 }
 
 /* =====================================================================
@@ -1093,7 +1163,7 @@ function renderTeam() {
 
   $("#view").innerHTML = `
     <div class="page-head">
-      <div><h1>أداء الفريق</h1><p>${members.length} موظف ${state.teamDirectOnly ? "تحت إدارتك المباشرة" : "تحت إدارتك"}</p></div>
+      <div><h1>أداء الفريق</h1><p>${tx(state.teamDirectOnly ? "{n} موظف تحت إدارتك المباشرة" : "{n} موظف تحت إدارتك", { n: members.length })}</p></div>
       <label class="check" style="margin:0"><input type="checkbox" id="direct" ${state.teamDirectOnly ? "checked" : ""}> المباشرين فقط</label>
     </div>
     <div class="stats">
@@ -1149,14 +1219,14 @@ function renderOrg() {
       late ? `<span class="bad" title="متأخرة">${icon("flame", "sm")}${late}</span>` : "",
     ].join("");
     return `<li class="${isCol ? "collapsed" : ""}" style="--d:${depth}">
-      <div class="org-card ${p.id === me ? "me" : ""} ${p.active ? "" : "inactive"} ${canSeeWork(p) ? "link" : ""}" data-person="${p.id}" ${canSeeWork(p) ? 'tabindex="0" role="link"' : ""} dir="rtl">
+      <div class="org-card ${p.id === me ? "me" : ""} ${p.active ? "" : "inactive"} ${canSeeWork(p) ? "link" : ""}" data-person="${p.id}" ${canSeeWork(p) ? 'tabindex="0" role="link"' : ""} dir="${LANG === "en" ? "ltr" : "rtl"}">
         ${p.id === me ? `<span class="me-tag">${p.gender === "female" ? "أنتِ" : "أنت"}</span>` : ""}
         ${avatar(p, "lg")}
         <b>${esc(p.full_name)}</b>
         <small>${esc(p.job_title || "—")}</small>
         ${stats ? `<div class="org-stats">${stats}</div>` : ""}
       </div>
-      ${kids.length ? `<button class="org-toggle" data-toggle="${p.id}" aria-expanded="${!isCol}" aria-label="${isCol ? "إظهار" : "إخفاء"} فريق ${esc(p.full_name)}">${isCol ? `+${team}` : "−"}</button>
+      ${kids.length ? `<button class="org-toggle" data-toggle="${p.id}" aria-expanded="${!isCol}" aria-label="${tx(isCol ? "إظهار فريق {name}" : "إخفاء فريق {name}", { name: esc(p.full_name) })}">${isCol ? `+${team}` : "−"}</button>
         <ul>${kids.map((k) => node(k, depth + 1)).join("")}</ul>` : ""}
     </li>`;
   };
@@ -1165,7 +1235,7 @@ function renderOrg() {
 
   $("#view").innerHTML = `
     <div class="page-head">
-      <div><h1>الهيكل التنظيمي</h1><p>${state.profiles.length} موظف · ${managers} مدير · ${levels.length} مستويات</p></div>
+      <div><h1>الهيكل التنظيمي</h1><p>${tx("{n} موظف · {m} مدير · {l} مستويات", { n: state.profiles.length, m: managers, l: levels.length })}</p></div>
       <div class="org-tools">
         <button class="btn sm" id="org-expand">${icon("expand", "sm")}فتح الكل</button>
         <button class="btn sm" id="org-collapse">${icon("collapse", "sm")}طي الكل</button>
@@ -1362,12 +1432,12 @@ function openUserModal(user = null) {
   if (!isNew && user.id !== state.me.id) {
     const up = $("#uf-pass", ov); if (up) up.onclick = () => openPasswordModal(user);
     $("#uf-active", ov).onclick = async () => {
-      if (!confirm(user.active ? `إيقاف حساب ${user.full_name}؟ مش هيقدر يدخل السستم.` : `تفعيل حساب ${user.full_name}؟`)) return;
+      if (!confirm(tx(user.active ? "إيقاف حساب {name}؟ مش هيقدر يدخل السستم." : "تفعيل حساب {name}؟", { name: user.full_name }))) return;
       try { await adminCall({ action: "set_active", user_id: user.id, active: !user.active }); await loadProfiles(); closeModal(); route(); toast("اتحدثت حالة الحساب"); }
       catch (ex) { err(friendly(ex)); }
     };
     $("#uf-del", ov).onclick = async () => {
-      if (!confirm(`حذف ${user.full_name} نهائيًا؟ الموظفين اللي تحته هيتنقلوا لمديره.`)) return;
+      if (!confirm(tx("حذف {name} نهائيًا؟ الموظفين اللي تحته هيتنقلوا لمديره.", { name: user.full_name }))) return;
       try { await adminCall({ action: "delete", user_id: user.id }); await Promise.all([loadProfiles(), loadTasks()]); closeModal(); route(); toast("اتحذف الموظف"); }
       catch (ex) { err(friendly(ex)); }
     };
@@ -1377,7 +1447,7 @@ function openUserModal(user = null) {
 function openPasswordModal(user) {
   const self = user.id === state.me.id;
   const ov = openModal(`
-    <h2>${self ? "تغيير كلمة السر" : `كلمة سر جديدة لـ ${esc(user.full_name)}`}</h2>
+    <h2>${self ? "تغيير كلمة السر" : tx("كلمة سر جديدة لـ {name}", { name: esc(user.full_name) })}</h2>
     <form id="pf">
       <label class="field"><span>كلمة السر الجديدة</span><input class="input" name="p1" type="password" dir="ltr" minlength="8" autocomplete="new-password" required></label>
       <label class="field"><span>تأكيد كلمة السر</span><input class="input" name="p2" type="password" dir="ltr" minlength="8" autocomplete="new-password" required></label>
