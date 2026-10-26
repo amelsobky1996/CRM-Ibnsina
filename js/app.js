@@ -87,9 +87,31 @@ function placeTabPill(root) {
 }
 
 const AV_COLORS = ["#0B6FC4", "#4A5DA8", "#167F8C", "#7A4FB5", "#B5562F", "#2E7D4F", "#A63D6B", "#5B6B82"];
+// Default illustrated avatars, used until the person uploads a photo.
+const DEFAULT_AVATAR = {
+  male: `<svg viewBox="0 0 64 64" aria-hidden="true">
+    <rect width="64" height="64" fill="#DCEBFA"/>
+    <path d="M8 66c2-14 12-21 24-21s22 7 24 21z" fill="#2F6FB5"/>
+    <path d="M27 38h10v9a5 5 0 0 1-10 0z" fill="#E6B48F"/>
+    <circle cx="32" cy="28" r="12" fill="#F1C7A3"/>
+    <path d="M20 28c-1-10 5-16 12.5-16S45 17 44 27c-3-5-8-7-12-7s-9 2-12 8z" fill="#3A2A22"/>
+    <path d="M26 45l6 6 6-6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" opacity=".85"/>
+  </svg>`,
+  female: `<svg viewBox="0 0 64 64" aria-hidden="true">
+    <rect width="64" height="64" fill="#FBE3EF"/>
+    <path d="M18 33c-1-14 5-21 14-21s15 7 14 21c0 8 2 13 5 17H13c3-4 5-9 5-17z" fill="#4A2C24"/>
+    <path d="M8 66c2-14 12-21 24-21s22 7 24 21z" fill="#C2408A"/>
+    <path d="M27 38h10v9a5 5 0 0 1-10 0z" fill="#E6B48F"/>
+    <circle cx="32" cy="28" r="11.5" fill="#F3CDAE"/>
+    <path d="M20.5 29c0-9 5-14.5 11.5-14.5S43.5 20 43.5 29c-5-1-9.5-4-11.5-8-2 4-6.5 7-11.5 8z" fill="#4A2C24"/>
+    <circle cx="32" cy="49" r="1.8" fill="#fff" opacity=".85"/>
+  </svg>`,
+};
+
 function avatar(p, cls = "") {
   if (!p) return `<span class="av ${cls}">?</span>`;
   if (p.avatar_url) return `<img class="av ${cls}" src="${esc(p.avatar_url)}" alt="${esc(p.full_name)}" title="${esc(p.full_name)}" loading="lazy">`;
+  if (DEFAULT_AVATAR[p.gender]) return `<span class="av av-default ${cls}" role="img" aria-label="${esc(p.full_name)}" title="${esc(p.full_name)}">${DEFAULT_AVATAR[p.gender]}</span>`;
   const initials = p.full_name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   let h = 0; for (const c of p.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return `<span class="av ${cls}" style="background:${AV_COLORS[h % AV_COLORS.length]}" title="${esc(p.full_name)}">${esc(initials)}</span>`;
@@ -1296,6 +1318,11 @@ function openUserModal(user = null) {
     $("#uf-av", ov).innerHTML = `<img class="av lg" src="${URL.createObjectURL(file)}" alt="">`;
   });
   const err = (m) => { $("#uf-err", ov).textContent = ""; requestAnimationFrame(() => $("#uf-err", ov).textContent = m); };
+  $$("input[name=gender]", ov).forEach((r) => r.onchange = () => {
+    if (photo || user?.avatar_url) return;
+    const name = $("input[name=full_name]", ov).value.trim() || "?";
+    $("#uf-av", ov).innerHTML = avatar({ id: user?.id || "new", full_name: name, gender: r.value }, "lg");
+  });
 
   $("#uf", ov).onsubmit = async (e) => {
     e.preventDefault();
