@@ -1,6 +1,7 @@
-// Ibnsina Digital CRM — admin-users Edge Function
+// Ibnsina Digital Tasks Tracker — admin-users Edge Function
 // إنشاء الحسابات، تغيير كلمة السر، إيقاف/تفعيل، وحذف الموظفين.
 // المدير يقدر يدير اللي تحته فقط، والأدمن يدير الكل.
+// تغيير كلمة سر أي موظف تاني متاح للأدمن (المدير الرئيسي) بس.
 
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -80,8 +81,9 @@ Deno.serve(async (req) => {
         const target = String(body.user_id ?? "");
         const password = String(body.password ?? "");
         if (password.length < 8) return json({ error: "كلمة السر لازم تكون 8 حروف على الأقل" }, 400);
-        if (target !== me.id && !(await canManage(target)))
-          return json({ error: "غير مسموح" }, 403);
+        // تغيير كلمة سر حد تاني: الأدمن الرئيسي بس
+        if (target !== me.id && !me.is_admin)
+          return json({ error: "تغيير كلمة سر الموظفين متاح للمدير الرئيسي بس" }, 403);
         const { error } = await admin.auth.admin.updateUserById(target, { password });
         if (error) return json({ error: error.message }, 400);
         return json({ ok: true });

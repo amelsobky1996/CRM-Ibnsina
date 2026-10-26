@@ -282,7 +282,7 @@ function renderLogin(message = "") {
         <div class="rays" aria-hidden="true">${rays}</div>
         <img src="assets/logo-white.png" alt="Ibnsina Pharma">
         <div class="copy">
-          <h1>Ibnsina Digital CRM</h1>
+          <h1>Digital Tasks Tracker</h1>
           <p>المشاريع والمهام والمواعيد والملفات في مكان واحد، وكل مدير شايف أداء فريقه أول بأول.</p>
         </div>
       </section>
@@ -329,7 +329,7 @@ function renderShell() {
     <div class="app">
       <aside class="side brand-bg">
         <img class="side-logo" src="assets/logo-white.png" alt="Ibnsina Pharma">
-        <div class="side-product">Digital CRM</div>
+        <div class="side-product">Digital Tasks Tracker</div>
         <nav class="nav" id="nav" aria-label="القائمة الرئيسية"></nav>
         <div class="side-me" id="side-me"></div>
       </aside>
@@ -1271,7 +1271,7 @@ function openUserModal(user = null) {
       <p class="err" id="uf-err"></p>
       <div class="modal-foot">
         ${!isNew && user.id !== state.me.id ? `
-          <button type="button" class="btn sm" id="uf-pass">تغيير كلمة السر</button>
+          ${state.me.is_admin ? `<button type="button" class="btn sm" id="uf-pass">تغيير كلمة السر</button>` : ""}
           <button type="button" class="btn sm" id="uf-active">${user.active ? "إيقاف الحساب" : "تفعيل الحساب"}</button>
           <button type="button" class="btn sm danger ghost" id="uf-del">حذف</button>
           <span class="spacer"></span>` : ""}
@@ -1318,7 +1318,7 @@ function openUserModal(user = null) {
   };
 
   if (!isNew && user.id !== state.me.id) {
-    $("#uf-pass", ov).onclick = () => openPasswordModal(user);
+    const up = $("#uf-pass", ov); if (up) up.onclick = () => openPasswordModal(user);
     $("#uf-active", ov).onclick = async () => {
       if (!confirm(user.active ? `إيقاف حساب ${user.full_name}؟ مش هيقدر يدخل السستم.` : `تفعيل حساب ${user.full_name}؟`)) return;
       try { await adminCall({ action: "set_active", user_id: user.id, active: !user.active }); await loadProfiles(); closeModal(); route(); toast("اتحدثت حالة الحساب"); }
