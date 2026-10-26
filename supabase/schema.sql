@@ -258,3 +258,45 @@ end $$;
 revoke execute on function public.is_admin(), public.is_ancestor(uuid,uuid), public.can_see_task(uuid), public.can_edit_profile(uuid), public.handle_new_user(), public.protect_profile() from public, anon;
 revoke execute on function public.handle_new_user(), public.protect_profile() from authenticated;
 grant execute on function public.is_admin(), public.is_ancestor(uuid,uuid), public.can_see_task(uuid), public.can_edit_profile(uuid) to authenticated, service_role;
+
+-- =====================================================================
+-- v2: المشاريع + إصلاح إضافة المهام للموظفين + حد 50 ميجا للملف
+-- =====================================================================
+drop policy if exists "tasks read" on public.tasks;
+create policy "tasks read" on public.tasks for select to authenticated
+  using (created_by = auth.uid() or public.is_ancestor(auth.uid(), created_by) or public.can_see_task(id));
+
+create table if not exists public.projects (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null check (char_length(name) between 1 and 120),
+  description text,
+  color       text not null default '#0B6FC4' check (color ~ '^#[0-9A-Fa-f]{6}$'),
+  status      text not null default 'active' check (status in ('active','archived')),
+  lead_id     uuid references public.profiles(id) on delete set null,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now()
+);
+alter table public.tasks add column if not exists project_id uuid references public.projects(id) on delete set null;
+create index if not exists tasks_project_idx on public.tasks(project_id);
+
+create or replace function public.is_manager()
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.is_admin() or exists (select 1 from public.profiles where manager_id = auth.uid());
+$$;
+revoke execute on function public.is_manager() from public, anon;
+grant execute on function public.is_manager() to authenticated, service_role;
+
+alter table public.projects enable row level security;
+create policy "projects read"   on public.projects for select to authenticated using (true);
+create policy "projects insert" on public.projects for insert to authenticated
+  with check (public.is_manager() and created_by = auth.uid());
+create policy "projects update" on public.projects for update to authenticated
+  using (created_by = auth.uid() or lead_id = auth.uid() or public.is_admin() or public.is_ancestor(auth.uid(), created_by))
+  with check (created_by = auth.uid() or lead_id = auth.uid() or public.is_admin() or public.is_ancestor(auth.uid(), created_by));
+create policy "projects delete" on public.projects for delete to authenticated
+  using (created_by = auth.uid() or public.is_admin() or public.is_ancestor(auth.uid(), created_by));
+do $$ begin
+  begin alter publication supabase_realtime add table public.projects; exception when others then null; end;
+end $$;
+
+update storage.buckets set file_size_limit = 52428800 where id = 'task-files';
