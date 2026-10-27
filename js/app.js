@@ -1803,6 +1803,15 @@ function hidePersonCard(now = false) {
   setTimeout(go, 140);
 }
 
+// large side photo for the hover card (real photo, gender illustration, or initials)
+function bigPhoto(p) {
+  if (p.avatar_url) return `<img class="pc-img" src="${esc(p.avatar_url)}" alt="${esc(p.full_name)}">`;
+  if (DEFAULT_AVATAR[p.gender]) return `<span class="pc-img pc-ill g-${p.gender}" role="img" aria-label="${esc(p.full_name)}">${DEFAULT_AVATAR[p.gender]}</span>`;
+  const initials = p.full_name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  let h = 0; for (const c of p.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `<span class="pc-img pc-ini" role="img" aria-label="${esc(p.full_name)}" style="--bg:${AV_COLORS[h % AV_COLORS.length]}">${esc(initials)}</span>`;
+}
+
 function showPersonCard(el) {
   const p = profile(el.dataset.pid);
   if (!p || !el.isConnected) return;
@@ -1822,26 +1831,26 @@ function showPersonCard(el) {
   card.setAttribute("role", "dialog");
   card.setAttribute("aria-label", p.full_name);
   card.innerHTML = `
-    <div class="pc-cover"></div>
-    <div class="pc-photo">${avatar(p, "xl")}</div>
-    <div class="pc-main">
-      <b class="pc-name">${esc(p.full_name)}</b>
-      <span class="pc-title">${esc(p.job_title || "—")}</span>
-      <div class="pc-tags">
-        ${p.id === me ? `<span class="pill s-in_progress">${p.gender === "female" ? "أنتِ" : "أنت"}</span>` : ""}
-        ${p.is_admin ? `<span class="pill s-review">أدمن</span>` : ""}
-        ${p.active ? "" : `<span class="pill s-blocked">موقوف</span>`}
-        ${p.gender ? genderPill(p.gender) : ""}
+    <div class="pc-photo">${bigPhoto(p)}${p.id === me ? `<span class="pc-me">${p.gender === "female" ? "أنتِ" : "أنت"}</span>` : ""}</div>
+    <div class="pc-body">
+      <div class="pc-main">
+        <b class="pc-name">${esc(p.full_name)}</b>
+        <span class="pc-title">${esc(p.job_title || "—")}</span>
+        <div class="pc-tags">
+          ${p.is_admin ? `<span class="pill s-review">أدمن</span>` : ""}
+          ${p.active ? "" : `<span class="pill s-blocked">موقوف</span>`}
+          ${p.gender ? genderPill(p.gender) : ""}
+        </div>
       </div>
-    </div>
-    <div class="pc-rows">
-      <div class="pc-row"><span class="pc-k">المدير المباشر</span>
-        ${mgr ? `<span class="pc-v pc-mgr">${avatar(mgr, "sm")}<span><b>${esc(mgr.full_name)}</b><small>${esc(mgr.job_title || "")}</small></span></span>`
-              : `<span class="pc-v muted">أعلى الهيكل</span>`}</div>
-      ${team ? `<div class="pc-row"><span class="pc-k">عدد الفريق</span><span class="pc-v"><b>${team}</b></span></div>` : ""}
-      ${canWork ? `<div class="pc-row"><span class="pc-k">مهام مفتوحة</span><span class="pc-v"><b>${open}</b>${late ? `<span class="pc-late">${icon("flame", "sm")}${tx("{n} متأخرة", { n: late })}</span>` : ""}</span></div>` : ""}
-    </div>
-    ${canWork ? `<a class="btn sm pc-link" href="#/tasks?user=${p.id}">${icon("tasks", "sm")}<span>عرض المهام</span></a>` : ""}`;
+      <div class="pc-rows">
+        <div class="pc-row pc-row-mgr"><span class="pc-k">المدير المباشر</span>
+          ${mgr ? `<span class="pc-v pc-mgr">${avatar(mgr, "sm")}<span><b>${esc(mgr.full_name)}</b><small>${esc(mgr.job_title || "")}</small></span></span>`
+                : `<span class="pc-v muted">أعلى الهيكل</span>`}</div>
+        ${team ? `<div class="pc-row"><span class="pc-k">عدد الفريق</span><span class="pc-v"><b>${team}</b></span></div>` : ""}
+        ${canWork ? `<div class="pc-row"><span class="pc-k">مهام مفتوحة</span><span class="pc-v"><b>${open}</b>${late ? `<span class="pc-late">${icon("flame", "sm")}${tx("{n} متأخرة", { n: late })}</span>` : ""}</span></div>` : ""}
+      </div>
+      ${canWork ? `<a class="btn sm pc-link" href="#/tasks?user=${p.id}">${icon("tasks", "sm")}<span>عرض المهام</span></a>` : ""}
+    </div>`;
   document.body.append(card);
 
   // position: below the photo if there's room, otherwise above; keep inside the viewport
