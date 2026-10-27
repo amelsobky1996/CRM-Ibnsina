@@ -129,11 +129,13 @@ const DEFAULT_AVATAR = {
 
 function avatar(p, cls = "") {
   if (!p) return `<span class="av ${cls}">?</span>`;
-  if (p.avatar_url) return `<img class="av ${cls}" src="${esc(p.avatar_url)}" alt="${esc(p.full_name)}" title="${esc(p.full_name)}" loading="lazy">`;
-  if (DEFAULT_AVATAR[p.gender]) return `<span class="av av-default ${cls}" role="img" aria-label="${esc(p.full_name)}" title="${esc(p.full_name)}">${DEFAULT_AVATAR[p.gender]}</span>`;
+  // data-pid powers the hover card; no title= so the browser tooltip doesn't fight it
+  const id = `data-pid="${esc(p.id)}"`;
+  if (p.avatar_url) return `<img class="av ${cls}" ${id} src="${esc(p.avatar_url)}" alt="${esc(p.full_name)}" loading="lazy">`;
+  if (DEFAULT_AVATAR[p.gender]) return `<span class="av av-default ${cls}" ${id} role="img" aria-label="${esc(p.full_name)}">${DEFAULT_AVATAR[p.gender]}</span>`;
   const initials = p.full_name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   let h = 0; for (const c of p.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return `<span class="av ${cls}" style="background:${AV_COLORS[h % AV_COLORS.length]}" title="${esc(p.full_name)}">${esc(initials)}</span>`;
+  return `<span class="av ${cls}" ${id} role="img" aria-label="${esc(p.full_name)}" style="background:${AV_COLORS[h % AV_COLORS.length]}">${esc(initials)}</span>`;
 }
 
 /* =====================================================================
@@ -1768,6 +1770,100 @@ async function exportReportXlsx(R, range) {
   } catch (e) { toast(friendly(e), true); }
   btn.disabled = false;
 }
+
+
+/* =====================================================================
+   Person hover card (hover a photo ~2s)
+   ===================================================================== */
+const HOVER_DELAY = 2000;
+let pcTimer = null, pcHideTimer = null, pcFor = null;
+
+function hidePersonCard(now = false) {
+  clearTimeout(pcTimer); pcTimer = null;
+  const card = $("#person-card");
+  if (!card) { pcFor = null; return; }
+  const go = () => { card.remove(); pcFor = null; };
+  if (now || reduceMotion) return go();
+  card.classList.add("closing");
+  setTimeout(go, 140);
+}
+
+function showPersonCard(el) {
+  const p = profile(el.dataset.pid);
+  if (!p || !el.isConnected) return;
+  hidePersonCard(true);
+  pcFor = el;
+  const me = state.me.id;
+  const mgr = profile(p.manager_id);
+  const team = descendants(p.id).length;
+  const canWork = p.id === me || state.me.is_admin || isAncestor(me, p.id);
+  const mine = canWork ? state.tasks.filter((t) => t.assignees.includes(p.id)) : [];
+  const open = mine.filter((t) => t.status !== "done").length;
+  const late = mine.filter(isOverdue).length;
+
+  const card = document.createElement("div");
+  card.id = "person-card";
+  card.className = "person-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", p.full_name);
+  card.innerHTML = `
+    <div class="pc-cover"></div>
+    <div class="pc-photo">${avatar(p, "xl")}</div>
+    <div class="pc-main">
+      <b class="pc-name">${esc(p.full_name)}</b>
+      <span class="pc-title">${esc(p.job_title || "—")}</span>
+      <div class="pc-tags">
+        ${p.id === me ? `<span class="pill s-in_progress">${p.gender === "female" ? "أنتِ" : "أنت"}</span>` : ""}
+        ${p.is_admin ? `<span class="pill s-review">أدمن</span>` : ""}
+        ${p.active ? "" : `<span class="pill s-blocked">موقوف</span>`}
+        ${p.gender ? genderPill(p.gender) : ""}
+      </div>
+    </div>
+    <div class="pc-rows">
+      <div class="pc-row"><span class="pc-k">المدير المباشر</span>
+        ${mgr ? `<span class="pc-v pc-mgr">${avatar(mgr, "sm")}<span><b>${esc(mgr.full_name)}</b><small>${esc(mgr.job_title || "")}</small></span></span>`
+              : `<span class="pc-v muted">أعلى الهيكل</span>`}</div>
+      ${team ? `<div class="pc-row"><span class="pc-k">عدد الفريق</span><span class="pc-v"><b>${team}</b></span></div>` : ""}
+      ${canWork ? `<div class="pc-row"><span class="pc-k">مهام مفتوحة</span><span class="pc-v"><b>${open}</b>${late ? `<span class="pc-late">${icon("flame", "sm")}${tx("{n} متأخرة", { n: late })}</span>` : ""}</span></div>` : ""}
+    </div>
+    ${canWork ? `<a class="btn sm pc-link" href="#/tasks?user=${p.id}">${icon("tasks", "sm")}<span>عرض المهام</span></a>` : ""}`;
+  document.body.append(card);
+
+  // position: below the photo if there's room, otherwise above; keep inside the viewport
+  const r = el.getBoundingClientRect(), cw = card.offsetWidth, ch = card.offsetHeight, gap = 10, pad = 10;
+  let top = r.bottom + gap, origin = "top";
+  if (top + ch > innerHeight - pad && r.top - gap - ch > pad) { top = r.top - gap - ch; origin = "bottom"; }
+  top = Math.max(pad, Math.min(top, innerHeight - ch - pad));
+  let left = r.left + r.width / 2 - cw / 2;
+  left = Math.max(pad, Math.min(left, innerWidth - cw - pad));
+  card.style.top = top + "px";
+  card.style.left = left + "px";
+  card.style.transformOrigin = `${Math.round(r.left + r.width / 2 - left)}px ${origin}`;
+
+  card.addEventListener("pointerenter", () => clearTimeout(pcHideTimer));
+  card.addEventListener("pointerleave", () => { pcHideTimer = setTimeout(() => hidePersonCard(), 200); });
+  $(".pc-link", card)?.addEventListener("click", () => { hidePersonCard(true); closeModal(); });
+}
+
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  const el = e.target.closest?.(".av[data-pid]");
+  if (!el || el.closest("#person-card")) return;
+  if (pcFor === el) { clearTimeout(pcHideTimer); return; }
+  clearTimeout(pcTimer);
+  pcTimer = setTimeout(() => showPersonCard(el), HOVER_DELAY);
+});
+document.addEventListener("pointerout", (e) => {
+  const el = e.target.closest?.(".av[data-pid]");
+  if (!el || el.closest("#person-card")) return;
+  if (el.contains(e.relatedTarget)) return;
+  clearTimeout(pcTimer);
+  if (pcFor === el) { clearTimeout(pcHideTimer); pcHideTimer = setTimeout(() => hidePersonCard(), 250); }
+});
+addEventListener("scroll", () => hidePersonCard(true), true);
+addEventListener("hashchange", () => hidePersonCard(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hidePersonCard(true); });
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#person-card")) hidePersonCard(true); });
 
 /* =====================================================================
    Settings (language + theme, saved on this device)

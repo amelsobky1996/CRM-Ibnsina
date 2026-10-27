@@ -229,6 +229,9 @@ const EN = {
   "الملخص": "Summary", "اتسلمت يوم": "Delivered on", "أيام التأخير": "Days late",
   "مقدرناش نحمّل مكتبة Excel، جرّب تاني.": "Couldn't load the Excel library. Try again.",
 
+  // ---------- person hover card
+  "أعلى الهيكل": "Top of the chart", "عرض المهام": "View tasks",
+
   // ---------- v4: settings
   "تخصيص شكل ولغة النظام.": "Personalize how the app looks.",
   "الإعدادات دي محفوظة مع حسابك، وبتطبق على أي جهاز تدخل منه.": "Saved to your account and applied on any device you sign in from.",

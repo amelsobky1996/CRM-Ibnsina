@@ -888,3 +888,36 @@ a.stat:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); }
 .overlay.drawer { align-items: flex-start; }
 .drawer .panel { min-height: 100vh; min-height: 100dvh; }
 .board { grid-template-columns: repeat(5, minmax(210px, 1fr)); }
+
+/* ---------- Person hover card ---------- */
+.av.xl { --s: 96px; font-size: 34px; }
+.av[data-pid] { cursor: default; }
+.person-card {
+  position: fixed; z-index: 80; width: 290px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow-3);
+  animation: pc-in .22s var(--spring);
+}
+.person-card.closing { animation: pc-in .14s ease-in reverse forwards; }
+@keyframes pc-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
+.pc-cover { height: 72px; background:
+  radial-gradient(90% 120% at 100% 0%, rgba(255,255,255,.18), transparent 60%),
+  linear-gradient(120deg, #0472C4, #4A5DA8); }
+.pc-photo { display: flex; justify-content: center; margin-top: -50px; }
+.pc-photo .av { box-shadow: 0 0 0 5px var(--card), 0 10px 24px -8px rgba(0,0,0,.35); }
+.pc-main { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; padding: 10px 18px 4px; }
+.pc-name { font-size: 18px; font-weight: 700; line-height: 1.3; unicode-bidi: plaintext; }
+.pc-title { color: var(--ink-3); font-size: 13.5px; unicode-bidi: plaintext; }
+.pc-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin-top: 8px; }
+.pc-tags:empty { display: none; }
+.pc-rows { margin: 12px 14px 0; border-top: 1px solid var(--line-2); }
+.pc-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line-2); font-size: 13px; }
+.pc-row:last-child { border-bottom: 0; }
+.pc-k { color: var(--ink-3); white-space: nowrap; }
+.pc-v { display: inline-flex; align-items: center; gap: 8px; min-width: 0; text-align: end; }
+.pc-v.muted { color: var(--ink-3); }
+.pc-mgr span { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+.pc-mgr b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; unicode-bidi: plaintext; }
+.pc-mgr small { color: var(--ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.pc-late { display: inline-flex; align-items: center; gap: 3px; color: var(--danger); font-weight: 700; font-size: 12px; }
+.pc-link { display: flex; margin: 12px 14px 14px; text-decoration: none; }
+.person-card > .pc-rows:last-child { margin-bottom: 14px; }
