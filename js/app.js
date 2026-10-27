@@ -18,6 +18,9 @@ const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "�
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
+  grid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  chev: '<path d="M15 6l-6 6 6 6"/>',
   tasks: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>',
   projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   team: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -412,6 +415,7 @@ function renderShell() {
         <div class="side-me" id="side-me"></div>
       </aside>
       <main class="main" id="view"></main>
+      <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
     </div>`;
   window.onhashchange = () => { state.animate = true; route(); };
   window.onresize = () => placeTabPill(document);
@@ -431,6 +435,13 @@ function renderNav() {
   items.push(["settings", "الإعدادات", "settings"]);
   $("#nav").innerHTML = items.map(([k, label, ic, n]) =>
     `<a href="#/${k}" class="${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${n ? `<span class="count">${n}</span>` : ""}</a>`).join("");
+  // Mobile app tab bar: first four destinations + "More" sheet for the rest
+  const primary = items.slice(0, 4), rest = items.slice(4);
+  const inMore = rest.some(([k]) => k === r.page);
+  $("#tabbar").innerHTML = primary.map(([k, label, ic, n]) =>
+    `<a href="#/${k}" class="tb ${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}><span class="tb-ic">${icon(ic)}${n ? `<span class="tb-badge">${n > 9 ? "9+" : n}</span>` : ""}</span><span class="tb-lbl">${label}</span></a>`).join("") +
+    `<button class="tb ${inMore ? "on" : ""}" id="tb-more" aria-haspopup="dialog"><span class="tb-ic">${icon("grid")}</span><span class="tb-lbl">المزيد</span></button>`;
+  $("#tb-more").onclick = () => openMoreSheet(rest);
   const me = state.me;
   $("#side-me").innerHTML = `
     <button class="avatar-btn" id="me-photo" title="تغيير صورتي" aria-label="تغيير صورتي">${avatar(me)}</button>
@@ -445,6 +456,29 @@ function renderNav() {
     try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
     catch (e) { toast(friendly(e), true); }
   });
+}
+
+function openMoreSheet(rest) {
+  const me = state.me, r = currentRoute();
+  const ov = openModal(`
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <div class="sheet-me">
+      ${avatar(me)}
+      <div class="who"><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></div>
+    </div>
+    <div class="sheet-list">
+      ${rest.map(([k, label, ic]) => `<a href="#/${k}" class="sheet-item ${r.page === k ? "on" : ""}"><span class="si-ic">${icon(ic)}</span><span>${label}</span>${icon("chev", "sm")}</a>`).join("")}
+    </div>
+    <div class="sheet-list">
+      <button class="sheet-item" data-act="photo"><span class="si-ic">${icon("camera")}</span><span>تغيير صورتي</span>${icon("chev", "sm")}</button>
+      <button class="sheet-item" data-act="pass"><span class="si-ic">${icon("lock")}</span><span>تغيير كلمة السر</span>${icon("chev", "sm")}</button>
+      <button class="sheet-item danger" data-act="out"><span class="si-ic">${icon("logout")}</span><span>تسجيل الخروج</span></button>
+    </div>`, { label: "المزيد" });
+  ov.classList.add("sheet");
+  $$(".sheet-list a", ov).forEach((a) => a.addEventListener("click", () => closeModal()));
+  $('[data-act="photo"]', ov).onclick = () => { closeModal(); $("#me-photo")?.click(); };
+  $('[data-act="pass"]', ov).onclick = () => { closeModal(); setTimeout(() => openPasswordModal(me), 220); };
+  $('[data-act="out"]', ov).onclick = () => { closeModal(); sb.auth.signOut(); };
 }
 
 function currentRoute() {
