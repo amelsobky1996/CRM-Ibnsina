@@ -268,9 +268,21 @@ const friendly = (e) => {
 /* =====================================================================
    Boot / Auth
    ===================================================================== */
+// Splash: keep it up for ~4s from page load (or until the app is ready, whichever is later)
+const SPLASH_MS = reduceMotion ? 1200 : 4000;
+let splashReady = false;
+function dismissSplash() {
+  const el = document.getElementById("splash");
+  if (!el || el.classList.contains("sp-out")) return;
+  const wait = Math.max(0, SPLASH_MS - performance.now());
+  setTimeout(() => { el.classList.add("sp-out"); setTimeout(() => el.remove(), 600); }, wait);
+}
+function splashDone() { if (!splashReady) { splashReady = true; dismissSplash(); } }
+
 async function init() {
   applyPrefs();
   startTranslator();
+  setTimeout(splashDone, 9000); // safety net if the network is slow
   if (!configured) return renderSetup();
   const { data: { session } } = await sb.auth.getSession();
   sb.auth.onAuthStateChange((evt) => { if (evt === "SIGNED_OUT") renderLogin(); });
@@ -322,6 +334,7 @@ function subscribe() {
 }
 
 function renderSetup() {
+  splashDone();
   $("#root").innerHTML = `
     <div class="setup">
       <h2>محتاج إعداد Supabase</h2>
@@ -330,6 +343,7 @@ function renderSetup() {
 }
 
 function renderLogin(message = "") {
+  splashDone();
   if (channel) { sb.removeChannel(channel); channel = null; }
   state.me = null;
   $("#modal-root").innerHTML = "";
@@ -386,6 +400,7 @@ function renderLogin(message = "") {
    Shell + routing
    ===================================================================== */
 function renderShell() {
+  splashDone();
   $("#root").innerHTML = `
     <div class="app">
       <aside class="side brand-bg">

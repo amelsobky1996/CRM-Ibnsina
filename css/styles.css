@@ -921,3 +921,35 @@ a.stat:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); }
 .pc-late { display: inline-flex; align-items: center; gap: 3px; color: var(--danger); font-weight: 700; font-size: 12px; }
 .pc-link { display: flex; margin: 12px 14px 14px; text-decoration: none; }
 .person-card > .pc-rows:last-child { margin-bottom: 14px; }
+
+/* =====================================================================
+   Splash screen (~4s, once per browser session)
+   ===================================================================== */
+#splash {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; color: #fff;
+  background:
+    radial-gradient(120% 70% at 100% 0%, rgba(255,255,255,.12), transparent 60%),
+    radial-gradient(90% 60% at 0% 100%, rgba(122, 79, 208, .45), transparent 70%),
+    linear-gradient(160deg, #0472C4 0%, #2C68B6 50%, #4A5DA8 100%);
+}
+html[data-splash="skip"] #splash { display: none; }
+#splash.sp-out { animation: sp-out .55s cubic-bezier(.6, 0, .4, 1) forwards; pointer-events: none; }
+@keyframes sp-out { to { opacity: 0; transform: scale(1.06); filter: blur(4px); } }
+.sp-glow { position: absolute; width: 70vmin; height: 70vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.28), transparent 65%); opacity: 0; animation: sp-glow 2.6s .2s ease-out forwards; }
+@keyframes sp-glow { 0% { opacity: 0; transform: scale(.3); } 45% { opacity: 1; } 100% { opacity: .35; transform: scale(1.25); } }
+.sp-inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 22px; width: min(540px, 80vw); }
+.sp-logo { width: 100%; height: auto; overflow: visible; fill: #fff; }
+.sp-ray { transform-box: fill-box; transform-origin: center; opacity: 0; animation: sp-ray .75s cubic-bezier(.2, 1.4, .4, 1) forwards; animation-delay: calc(.25s + var(--i) * 55ms); }
+@keyframes sp-ray { from { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.15) rotate(-25deg); } 60% { opacity: 1; } to { opacity: 1; transform: none; } }
+.sp-sym { animation: sp-pulse 1s 2.25s ease-in-out; }
+@keyframes sp-pulse { 50% { transform: scale(1.06) rotate(4deg); filter: drop-shadow(0 0 14px rgba(255,255,255,.7)); } }
+.sp-word { clip-path: inset(-5% 100% -5% 0); animation: sp-wipe .95s 1.05s cubic-bezier(.65, 0, .35, 1) forwards; }
+@keyframes sp-wipe { to { clip-path: inset(-5% -1% -5% 0); } }
+.sp-tag { font-family: var(--font); font-size: clamp(14px, 2.4vw, 19px); font-weight: 600; letter-spacing: .04em; opacity: 0; transform: translateY(10px); animation: sp-tag .6s 1.9s var(--ease) forwards; }
+@keyframes sp-tag { to { opacity: .92; transform: none; } }
+.sp-bar { width: 140px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.22); overflow: hidden; opacity: 0; animation: sp-tag .4s 1.2s ease forwards; }
+.sp-bar i { display: block; height: 100%; width: 100%; background: #fff; border-radius: 3px; transform: scaleX(0); transform-origin: left; animation: sp-load 2.3s 1.25s cubic-bezier(.4, 0, .2, 1) forwards; }
+@keyframes sp-load { to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .sp-ray, .sp-word, .sp-tag, .sp-bar, .sp-glow, .sp-bar i { animation: none !important; opacity: 1; clip-path: none; transform: none; }
+}
