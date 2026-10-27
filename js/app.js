@@ -268,8 +268,8 @@ const friendly = (e) => {
 /* =====================================================================
    Boot / Auth
    ===================================================================== */
-// Splash: keep it up for ~4s from page load (or until the app is ready, whichever is later)
-const SPLASH_MS = reduceMotion ? 1200 : 4000;
+// Splash: ~4s of animation then ~4s holding the final frame (8s from page load (or until the app is ready, whichever is later)
+const SPLASH_MS = reduceMotion ? 2500 : 8000;
 let splashReady = false;
 function dismissSplash() {
   const el = document.getElementById("splash");
@@ -282,7 +282,7 @@ function splashDone() { if (!splashReady) { splashReady = true; dismissSplash();
 async function init() {
   applyPrefs();
   startTranslator();
-  setTimeout(splashDone, 9000); // safety net if the network is slow
+  setTimeout(splashDone, 12000); // safety net if the network is slow
   if (!configured) return renderSetup();
   const { data: { session } } = await sb.auth.getSession();
   sb.auth.onAuthStateChange((evt) => { if (evt === "SIGNED_OUT") renderLogin(); });
@@ -404,10 +404,10 @@ function renderShell() {
   $("#root").innerHTML = `
     <div class="app">
       <aside class="side brand-bg">
-        <div class="side-brand">
+        <a class="side-brand" href="#/home" title="الرئيسية" aria-label="الرئيسية">
           <img class="side-logo" src="assets/logo-white.png" alt="Ibnsina Pharma">
           <div class="side-product">Digital Team Tasks Tracker</div>
-        </div>
+        </a>
         <nav class="nav" id="nav" aria-label="القائمة الرئيسية"></nav>
         <div class="side-me" id="side-me"></div>
       </aside>
