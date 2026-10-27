@@ -303,3 +303,13 @@ update storage.buckets set file_size_limit = 52428800 where id = 'task-files';
 
 -- v3: النوع (gender)
 alter table public.profiles add column if not exists gender text check (gender in ('male','female'));
+
+-- =====================================================================
+-- v4 (applied as migration "v4_collab_notifications_scores"):
+--   task_comments, task_subtasks, task_activity, notifications (+RLS),
+--   audit/notify triggers, subtasks→progress sync, notify_due_soon()
+--   scheduled daily with pg_cron at 05:00 UTC, team_scores(p_days),
+--   profiles.pref_lang / pref_theme.
+-- The full SQL is stored in the project's migration history:
+--   supabase db pull   (or Dashboard → Database → Migrations)
+-- =====================================================================

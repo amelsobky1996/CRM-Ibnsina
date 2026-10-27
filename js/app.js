@@ -41,6 +41,20 @@ const ICONS = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.7 4.7 0 0 0 21 9.7C21 5.9 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7" r="1.2"/><circle cx="14.5" cy="7" r="1.2"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  checklist: '<path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17"/><path d="M11 6h9M11 12h9M11 18h9"/>',
+  send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
+  board: '<rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="10" rx="1.5"/><rect x="17" y="4" width="4" height="13" rx="1.5"/>',
+  rows: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  report: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 17v-3M12 17v-6M16 17v-2"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  printer: '<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/>',
+  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   zoomIn: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6M11 8v6"/>',
   zoomOut: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6"/>',
@@ -138,6 +152,10 @@ const state = {
   projById: new Map(),
   view: { tab: "mine", status: "all", q: "", user: null, project: "" },
   teamDirectOnly: false,
+  notifs: [],
+  scores: {},
+  homePeriod: 30,
+  reportWeek: 0,
   showArchived: false,
   animate: true,
 };
@@ -265,7 +283,8 @@ async function boot(userId) {
     state.me = profile(userId);
     if (!state.me) throw new Error("لا يوجد ملف موظف مرتبط بهذا الحساب");
     if (!state.me.active) { await sb.auth.signOut(); return renderLogin("الحساب ده موقوف. كلّم مديرك."); }
-    await Promise.all([loadTasks(), loadProjects()]);
+    syncPrefsFromProfile();
+    await Promise.all([loadTasks(), loadProjects(), loadNotifs()]);
     renderShell();
     subscribe();
   } catch (e) {
@@ -290,6 +309,13 @@ function subscribe() {
   channel = sb.channel("crm");
   for (const table of ["tasks", "task_assignees", "profiles", "projects"])
     channel.on("postgres_changes", { event: "*", schema: "public", table }, reload);
+  channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async (payload) => {
+    await loadNotifs();
+    renderBell(true);
+    const n = payload.new && state.notifs.find((x) => x.id === payload.new.id);
+    if (n) { const tmp = document.createElement("div"); tmp.innerHTML = notifText(n); toast(tmp.textContent); }
+  });
+  channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async () => { await loadNotifs(); renderBell(); });
   channel.subscribe();
 }
 
@@ -380,7 +406,8 @@ function renderNav() {
   if (!$("#nav")) return;
   const r = currentRoute();
   const myOpen = state.tasks.filter((t) => t.assignees.includes(state.me.id) && t.status !== "done").length;
-  const items = [["tasks", "المهام", "tasks", myOpen], ["projects", "المشاريع", "projects"]];
+  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["projects", "المشاريع", "projects"]];
+  if (isManager()) items.push(["reports", "التقارير", "report"]);
   if (isManager()) items.push(["team", "أداء الفريق", "team"]);
   items.push(["org", "الهيكل التنظيمي", "org"]);
   if (isManager()) items.push(["users", "الموظفين", "users"]);
@@ -391,9 +418,11 @@ function renderNav() {
   $("#side-me").innerHTML = `
     <button class="avatar-btn" id="me-photo" title="تغيير صورتي" aria-label="تغيير صورتي">${avatar(me)}</button>
     <div class="who" title="${esc(me.full_name)}"><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></div>
+    <span id="bell-slot"></span>
     <button class="icon-btn" id="me-pass" title="تغيير كلمة السر" aria-label="تغيير كلمة السر">${icon("lock")}</button>
     <button class="icon-btn" id="logout" title="تسجيل الخروج" aria-label="تسجيل الخروج">${icon("logout")}</button>`;
   $("#logout").onclick = () => sb.auth.signOut();
+  renderBell();
   $("#me-pass").onclick = () => openPasswordModal(me);
   $("#me-photo").onclick = () => pickFile("image/*", async (file) => {
     try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
@@ -404,7 +433,7 @@ function renderNav() {
 function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   const [page, qs] = h.split("?");
-  return { page: page || "tasks", params: new URLSearchParams(qs || "") };
+  return { page: page || "home", params: new URLSearchParams(qs || "") };
 }
 
 function route() {
@@ -413,10 +442,13 @@ function route() {
   renderNav();
   const view = $("#view");
   if (page === "settings") renderSettings();
+  else if (page === "home") renderHome();
+  else if (page === "reports" && isManager()) renderReports();
   else if (page === "projects") renderProjects();
   else if (page === "team" && isManager()) renderTeam();
   else if (page === "org") renderOrg();
   else if (page === "users" && isManager()) renderUsers();
+  else if (page !== "tasks") { location.replace("#/home"); return; }
   else {
     if (location.hash !== state.lastHash) {
       state.lastHash = location.hash;
@@ -522,6 +554,7 @@ function renderTasks() {
     list = list.filter((t) => t.title.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q));
   }
   list = sortTasks(list);
+  const board = getView() === "board";
   const filterUser = v.user && profile(v.user);
   const filterProj = project(v.project);
   const firstName = state.me.full_name.split(" ")[0];
@@ -550,15 +583,19 @@ function renderTasks() {
       ${filterUser ? `<span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span>` : ""}
     </div>
     <div class="toolbar">
-      <div class="chips">
+      <div class="view-toggle" role="group" aria-label="طريقة العرض">
+        <button class="${board ? "" : "on"}" data-view="list" aria-pressed="${!board}" title="قائمة">${icon("rows", "sm")}<span>قائمة</span></button>
+        <button class="${board ? "on" : ""}" data-view="board" aria-pressed="${board}" title="كانبان">${icon("board", "sm")}<span>كانبان</span></button>
+      </div>
+      ${board ? "" : `<div class="chips">
         <button class="chip ${v.status === "all" ? "on" : ""}" data-st="all">الكل</button>
         ${Object.entries(STATUS).map(([k, l]) => `<button class="chip ${v.status === k ? "on" : ""}" data-st="${k}">${l}</button>`).join("")}
-      </div>
+      </div>`}
       <span class="grow"></span>
       <select class="input" id="proj-filter" aria-label="المشروع">${projectOptions(v.project, { includeArchivedId: v.project, emptyLabel: "كل المشاريع" })}</select>
       <div class="input-icon search">${icon("search", "sm")}<input class="input" id="q" type="search" placeholder="ابحث في المهام" value="${esc(v.q)}"></div>
     </div>
-    <div class="list ${state.animate ? "stagger" : ""}">
+    ${board ? boardHtml(list) : `<div class="list ${state.animate ? "stagger" : ""}">
       ${list.length ? `<div class="list-head"><span>الحالة</span><span>المهمة</span><span>المسؤولين</span><span>الموعد</span><span>الإنجاز</span><span></span></div>` : ""}
       ${list.map((t, i) => {
         const p = project(t.project_id);
@@ -573,9 +610,16 @@ function renderTasks() {
           <span class="row-actions">${canDeleteTask(t) ? `<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="${tx("حذف المهمة {title}", { title: esc(t.title) })}">${icon("trash", "sm")}</button>` : ""}</span>
         </div>`;
       }).join("") || `<div class="empty"><div class="ill">${icon("tasks")}</div><b>مفيش مهام هنا</b>${v.tab === "mine" && v.status === "all" && !v.project ? "أي مهمة تتسند لك هتظهر في القائمة دي." : "غيّر الفلتر أو أضف مهمة جديدة."}</div>`}
-    </div>`;
+    </div>`}`;
 
   $("#new-task").onclick = () => openNewTask();
+  $$("[data-view]").forEach((b) => b.onclick = () => {
+    if (b.dataset.view === getView()) return;
+    setView(b.dataset.view);
+    if (b.dataset.view === "board" && STATUS[v.status]) v.status = "all";
+    state.animate = true; renderTasks(); afterRender();
+  });
+  if (board) wireBoard();
   $$("[data-tab]").forEach((b) => b.onclick = () => {
     v.tab = b.dataset.tab;
     $$("[data-tab]").forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b); });
@@ -623,12 +667,14 @@ function afterRender() {
 function closeModal() {
   const ov = $("#modal-root .overlay");
   if (!ov) return;
+  cleanupDrawer();
   document.body.style.overflow = "";
   if (reduceMotion) { $("#modal-root").innerHTML = ""; return; }
   ov.classList.add("closing");
   setTimeout(() => { if (ov.isConnected) $("#modal-root").innerHTML = ""; }, 200);
 }
 function openModal(html, { drawer = false, label = "" } = {}) {
+  cleanupDrawer();
   $("#modal-root").innerHTML = `<div class="overlay ${drawer ? "drawer" : ""}" role="dialog" aria-modal="true" aria-label="${esc(label)}">${drawer ? `<div class="panel">${html}</div>` : `<div class="modal">${html}</div>`}</div>`;
   document.body.style.overflow = "hidden";
   const ov = $("#modal-root .overlay");
@@ -807,7 +853,8 @@ function openTask(id) {
       <div class="row2">
         <label class="field"><span>الموعد النهائي</span><input class="input" type="date" name="deadline" value="${t.deadline || ""}" ${manage ? "" : "disabled"}></label>
         <div class="field"><span>نسبة الإنجاز</span>
-          <div class="range-row"><input type="range" name="progress" min="0" max="100" step="5" value="${t.progress}" ${work ? "" : "disabled"} aria-label="نسبة الإنجاز"><output id="pv">${t.progress}%</output></div></div>
+          <div class="range-row"><input type="range" name="progress" min="0" max="100" step="5" value="${t.progress}" ${work ? "" : "disabled"} aria-label="نسبة الإنجاز"><output id="pv">${t.progress}%</output></div>
+          <small class="hint" id="pv-hint" hidden>بتتحسب تلقائيًا من الخطوات</small></div>
       </div>
       <label class="field"><span>التفاصيل</span><textarea class="input" name="description" ${manage ? "" : "disabled"}>${esc(t.description || "")}</textarea></label>
 
@@ -825,9 +872,32 @@ function openTask(id) {
     </form>
 
     <div class="section">
+      <h3>${icon("checklist", "sm")}الخطوات <span class="sub-count" id="sub-count"></span></h3>
+      <div class="sub-bar" id="sub-bar" hidden><i></i></div>
+      <div id="sub-list" class="subtasks"><div class="spinner" style="margin:10px auto"></div></div>
+      ${work ? `<div class="sub-add"><input class="input" id="sub-new" placeholder="أضف خطوة واضغط Enter" maxlength="300" aria-label="خطوة جديدة"><button type="button" class="btn sm" id="sub-add-btn">${icon("plus", "sm")}إضافة</button></div>` : ""}
+    </div>
+
+    <div class="section">
       <h3>${icon("clip", "sm")}الملفات</h3>
       <div id="files-box"><div class="spinner" style="margin:10px auto"></div></div>
       ${work ? `<label class="dropzone" id="drop">${icon("clip", "sm")}<span>${dropText}</span><input type="file" multiple></label><div id="up-progress"></div>` : ""}
+    </div>
+
+    <div class="section">
+      <div class="seg-tabs" role="tablist">
+        <button type="button" class="on" role="tab" aria-selected="true" data-dtab="comments">${icon("chat", "sm")}<span>التعليقات</span><span class="n" id="c-count"></span></button>
+        <button type="button" role="tab" aria-selected="false" data-dtab="activity">${icon("history", "sm")}<span>سجل النشاط</span></button>
+      </div>
+      <div id="dtab-comments">
+        <div id="c-list" class="comments"><div class="spinner" style="margin:10px auto"></div></div>
+        <form id="c-form" class="c-form">
+          ${avatar(state.me, "sm")}
+          <textarea class="input" name="body" rows="2" maxlength="4000" placeholder="اكتب تعليق…" aria-label="اكتب تعليق…"></textarea>
+          <button class="btn primary sm" type="submit" aria-label="إرسال">${icon("send", "sm")}</button>
+        </form>
+      </div>
+      <div id="dtab-activity" hidden><div id="a-list" class="timeline"></div></div>
     </div>`, { drawer: true, label: t.title });
 
   $("[data-close]", ov).onclick = closeModal;
@@ -861,13 +931,16 @@ function openTask(id) {
   const del = $("#del-task", ov);
   if (del) del.onclick = () => deleteTask(t);
 
+  wireDrawerExtras(t, ov, work);
+
   const form = $("#td", ov);
   if (!work) return;
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     const tdErr = (m) => { $("#td-err", ov).textContent = ""; requestAnimationFrame(() => $("#td-err", ov).textContent = m); };
-    const patch = { status: f.get("status"), progress: Number(f.get("progress")) };
+    const patch = { status: f.get("status") };
+    if (!range.disabled) patch.progress = Number(f.get("progress"));
     if (manage) {
       patch.title = String(f.get("title")).trim();
       patch.description = String(f.get("description")).trim() || null;
@@ -1077,6 +1150,626 @@ function openProjectModal(p = null) {
 }
 
 /* =====================================================================
+   Preferences sync (language + theme follow the account)
+   ===================================================================== */
+function syncPrefsFromProfile() {
+  const me = state.me;
+  if (me.pref_lang && me.pref_lang !== LANG) setLang(me.pref_lang);
+  if (me.pref_theme && me.pref_theme !== THEME) setTheme(me.pref_theme);
+  if (!me.pref_lang || !me.pref_theme) savePrefs();
+}
+function savePrefs() {
+  if (!state.me) return;
+  sb.from("profiles").update({ pref_lang: LANG, pref_theme: THEME }).eq("id", state.me.id)
+    .then(({ error }) => { if (!error) { state.me.pref_lang = LANG; state.me.pref_theme = THEME; } });
+}
+
+function timeAgo(d) {
+  const s = (Date.now() - new Date(d)) / 1000;
+  if (s < 60) return tx("دلوقتي");
+  if (s < 3600) return tx("من {n} دقيقة", { n: Math.floor(s / 60) });
+  if (s < 86400) return tx("من {n} ساعة", { n: Math.floor(s / 3600) });
+  if (s < 86400 * 7) return tx("من {n} يوم", { n: Math.floor(s / 86400) });
+  return fmtDate(d);
+}
+const debounced = (() => { const timers = new Map(); return (fn, ms = 250) => { clearTimeout(timers.get(fn)); timers.set(fn, setTimeout(fn, ms)); }; })();
+
+/* =====================================================================
+   Notifications
+   ===================================================================== */
+async function loadNotifs() {
+  const { data, error } = await sb.from("notifications").select("*").order("created_at", { ascending: false }).limit(60);
+  if (!error) state.notifs = data || [];
+}
+const unreadCount = () => state.notifs.filter((n) => !n.read_at).length;
+
+function notifText(n) {
+  const actor = `<b>${esc(profile(n.actor_id)?.full_name || tx("حد من الفريق"))}</b>`;
+  const title = `<b>«${esc(n.data?.title || "")}»</b>`;
+  switch (n.type) {
+    case "assigned": return tx("{actor} أسند لك مهمة {title}", { actor, title });
+    case "comment": return tx("{actor} علّق على {title}", { actor, title });
+    case "completed": return tx("{actor} خلّص مهمة {title}", { actor, title });
+    case "due_soon": return tx("موعد تسليم {title} بكرة", { title });
+    default: return title;
+  }
+}
+
+function renderBell(ring = false) {
+  const slot = $("#bell-slot");
+  if (!slot) return;
+  const n = unreadCount();
+  slot.innerHTML = `<button class="icon-btn bell ${ring ? "ring" : ""}" id="bell" title="الإشعارات" aria-label="الإشعارات" aria-haspopup="dialog">${icon("bell")}${n ? `<span class="badge">${n > 9 ? "9+" : n}</span>` : ""}</button>`;
+  $("#bell").onclick = (e) => { e.stopPropagation(); toggleNotifPanel(); };
+  if ($("#notif-panel")) toggleNotifPanel(true);
+}
+
+function toggleNotifPanel(refresh = false) {
+  let panel = $("#notif-panel");
+  if (panel && !refresh) { panel.classList.add("closing"); setTimeout(() => panel.remove(), reduceMotion ? 0 : 160); return; }
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "notif-panel"; panel.className = "notif-panel";
+    panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "الإشعارات");
+    document.body.append(panel);
+  }
+  const items = state.notifs;
+  panel.innerHTML = `
+    <div class="np-head"><b>الإشعارات</b>${unreadCount() ? `<button class="btn ghost sm" id="np-read">تحديد الكل كمقروء</button>` : ""}</div>
+    <div class="np-list">${items.length ? items.map((n) => {
+      const actor = profile(n.actor_id);
+      return `<button class="np-item ${n.read_at ? "" : "unread"}" data-n="${n.id}">
+        <span class="np-ico t-${n.type}">${actor ? avatar(actor, "sm") : icon(n.type === "due_soon" ? "clock" : "bell", "sm")}</span>
+        <span class="np-body"><span class="np-text">${notifText(n)}</span>
+          ${n.type === "comment" && n.data?.excerpt ? `<span class="np-ex">${esc(n.data.excerpt)}</span>` : ""}
+          <small>${timeAgo(n.created_at)}</small></span>
+      </button>`;
+    }).join("") : `<div class="np-empty">${icon("bell")}<b>مفيش إشعارات</b><span>هتوصلك هنا لما حد يسند لك مهمة أو يعلّق عليها أو موعد يقرّب.</span></div>`}</div>`;
+  const rd = $("#np-read", panel);
+  if (rd) rd.onclick = async (e) => {
+    e.stopPropagation();
+    const now = new Date().toISOString();
+    state.notifs.forEach((n) => { n.read_at = n.read_at || now; });
+    renderBell();
+    await sb.from("notifications").update({ read_at: now }).eq("user_id", state.me.id).is("read_at", null);
+  };
+  $$("[data-n]", panel).forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const n = state.notifs.find((x) => x.id === b.dataset.n);
+    toggleNotifPanel();
+    if (n && !n.read_at) {
+      n.read_at = new Date().toISOString(); renderBell();
+      sb.from("notifications").update({ read_at: n.read_at }).eq("id", n.id).then(() => {});
+    }
+    if (n?.task_id && state.tasks.some((t) => t.id === n.task_id)) openTask(n.task_id);
+    else toast("المهمة دي مبقتش موجودة", true);
+  });
+}
+document.addEventListener("click", (e) => {
+  const p = $("#notif-panel");
+  if (p && !p.contains(e.target) && !e.target.closest("#bell")) toggleNotifPanel();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#notif-panel")) toggleNotifPanel(); });
+
+/* =====================================================================
+   Task drawer extras: checklist, comments, activity (live)
+   ===================================================================== */
+let drawerCh = null, drawerDirty = false;
+function cleanupDrawer() {
+  if (drawerCh) { sb.removeChannel(drawerCh); drawerCh = null; }
+  if (drawerDirty) {
+    drawerDirty = false;
+    loadTasks().then(() => { state.animate = false; route(); }).catch(console.error);
+  }
+}
+
+const ACT_ICON = {
+  created: "plus", status: "tasks", progress: "team", deadline: "calendar", title: "edit", priority: "flame",
+  project: "projects", assigned: "users", unassigned: "users", file_added: "clip", file_removed: "clip",
+  subtask_added: "checklist", subtask_done: "check", subtask_undone: "checklist",
+};
+function activityText(a) {
+  const actor = `<b>${esc(profile(a.actor_id)?.full_name || tx("النظام"))}</b>`;
+  const d = a.details || {};
+  const q = (x) => `<b>«${esc(x ?? "")}»</b>`;
+  const person = (id) => `<b>${esc(profile(id)?.full_name || "—")}</b>`;
+  const st = (k) => `<span class="pill s-${esc(k)}">${tx(STATUS[k] || k)}</span>`;
+  switch (a.action) {
+    case "created": return tx("{a} أنشأ المهمة", { a: actor });
+    case "status": return tx("{a} غيّر الحالة من {from} إلى {to}", { a: actor, from: st(d.from), to: st(d.to) });
+    case "progress": return tx("{a} حدّث الإنجاز إلى {n}%", { a: actor, n: d.to });
+    case "deadline": return d.to ? tx("{a} غيّر الموعد إلى {d}", { a: actor, d: `<b>${fmtDate(d.to)}</b>` }) : tx("{a} شال الموعد النهائي", { a: actor });
+    case "title": return tx("{a} غيّر العنوان إلى {t}", { a: actor, t: q(d.to) });
+    case "priority": return tx("{a} غيّر الأولوية إلى {p}", { a: actor, p: `<b>${tx(PRIORITY[d.to] || d.to)}</b>` });
+    case "project": return d.to ? tx("{a} نقل المهمة لمشروع {p}", { a: actor, p: q(d.to) }) : tx("{a} شال المهمة من المشروع", { a: actor });
+    case "assigned": return tx("{a} أسند المهمة إلى {u}", { a: actor, u: person(d.user_id) });
+    case "unassigned": return tx("{a} شال {u} من المهمة", { a: actor, u: person(d.user_id) });
+    case "file_added": return tx("{a} رفع ملف {f}", { a: actor, f: q(d.name) });
+    case "file_removed": return tx("{a} حذف ملف {f}", { a: actor, f: q(d.name) });
+    case "subtask_added": return tx("{a} أضاف خطوة {s}", { a: actor, s: q(d.title) });
+    case "subtask_done": return tx("{a} خلّص خطوة {s}", { a: actor, s: q(d.title) });
+    case "subtask_undone": return tx("{a} رجّع خطوة {s} لغير مكتملة", { a: actor, s: q(d.title) });
+    default: return esc(a.action);
+  }
+}
+
+function wireDrawerExtras(t, ov, work) {
+  const range = $("input[name=progress]", ov);
+
+  // ---- checklist
+  const subList = $("#sub-list", ov);
+  let subs = [];
+  const refreshProgress = async () => {
+    const { data } = await sb.from("tasks").select("progress").eq("id", t.id).single();
+    if (data && ov.isConnected) { t.progress = data.progress; range.value = data.progress; $("#pv", ov).textContent = data.progress + "%"; }
+  };
+  const renderSubs = () => {
+    if (!ov.isConnected) return;
+    const done = subs.filter((x) => x.done).length;
+    $("#sub-count", ov).textContent = subs.length ? `${done}/${subs.length}` : "";
+    const bar = $("#sub-bar", ov);
+    bar.hidden = !subs.length;
+    if (subs.length) $("i", bar).style.width = (done * 100 / subs.length) + "%";
+    const auto = subs.length > 0;
+    range.disabled = auto || !work;
+    $("#pv-hint", ov).hidden = !auto;
+    subList.innerHTML = subs.length ? subs.map((x) => `
+      <div class="sub ${x.done ? "done" : ""}" data-sub="${x.id}">
+        <label><input type="checkbox" ${x.done ? "checked" : ""} ${work ? "" : "disabled"}><span class="box">${icon("check", "sm")}</span><span class="txt">${esc(x.title)}</span></label>
+        ${work ? `<button type="button" class="sub-del" data-sdel="${x.id}" aria-label="حذف الخطوة">${icon("close", "sm")}</button>` : ""}
+      </div>`).join("")
+      : `<p class="meta" style="margin:0">مفيش خطوات لسه. قسّم المهمة لخطوات صغيرة ونسبة الإنجاز هتتحسب لوحدها.</p>`;
+    $$("input[type=checkbox]", subList).forEach((cb) => cb.onchange = async () => {
+      const id = cb.closest("[data-sub]").dataset.sub, it = subs.find((x) => x.id === id);
+      it.done = cb.checked; renderSubs(); drawerDirty = true;
+      const { error } = await sb.from("task_subtasks").update({ done: it.done }).eq("id", id);
+      if (error) { it.done = !it.done; renderSubs(); return toast(friendly(error), true); }
+      refreshProgress();
+    });
+    $$("[data-sdel]", subList).forEach((b) => b.onclick = async () => {
+      const id = b.dataset.sdel, row = b.closest(".sub");
+      row.classList.add("removing");
+      const { error } = await sb.from("task_subtasks").delete().eq("id", id);
+      if (error) { row.classList.remove("removing"); return toast(friendly(error), true); }
+      subs = subs.filter((x) => x.id !== id); drawerDirty = true; renderSubs(); refreshProgress();
+    });
+  };
+  const loadSubs = async () => {
+    const { data } = await sb.from("task_subtasks").select("*").eq("task_id", t.id).order("position").order("created_at");
+    subs = data || []; renderSubs();
+  };
+  const addInput = $("#sub-new", ov);
+  const addSub = async () => {
+    const title = addInput.value.trim();
+    if (!title) return;
+    addInput.value = ""; addInput.focus();
+    const { data, error } = await sb.from("task_subtasks").insert({ task_id: t.id, title, position: subs.length }).select().single();
+    if (error) return toast(friendly(error), true);
+    if (!subs.some((x) => x.id === data.id)) subs.push(data);
+    drawerDirty = true; renderSubs(); refreshProgress();
+  };
+  if (addInput) {
+    addInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); addSub(); } };
+    $("#sub-add-btn", ov).onclick = addSub;
+  }
+
+  // ---- comments
+  const cList = $("#c-list", ov);
+  const loadComments = async () => {
+    const { data, error } = await sb.from("task_comments").select("*").eq("task_id", t.id).order("created_at");
+    if (!ov.isConnected) return;
+    if (error) { cList.innerHTML = `<p class="err">${esc(friendly(error))}</p>`; return; }
+    $("#c-count", ov).textContent = data.length || "";
+    cList.innerHTML = data.length ? data.map((c) => {
+      const u = profile(c.user_id), mine = c.user_id === state.me.id;
+      return `<div class="comment ${mine ? "mine" : ""}">${avatar(u, "sm")}
+        <div class="c-body"><div class="c-meta"><b>${esc(u?.full_name || "—")}</b><small title="${fmtDateTime(c.created_at)}">${timeAgo(c.created_at)}</small>
+          ${mine || state.me.is_admin ? `<button class="c-del" data-cdel="${c.id}" aria-label="حذف التعليق">${icon("trash", "sm")}</button>` : ""}</div>
+          <p>${esc(c.body)}</p></div></div>`;
+    }).join("") : `<p class="meta" style="margin:0 0 12px">مفيش تعليقات لسه. ابدأ النقاش هنا.</p>`;
+    cList.scrollTop = cList.scrollHeight;
+    $$("[data-cdel]", cList).forEach((b) => b.onclick = async () => {
+      const { error: e2 } = await sb.from("task_comments").delete().eq("id", b.dataset.cdel);
+      if (e2) return toast(friendly(e2), true);
+      loadComments();
+    });
+  };
+  const cForm = $("#c-form", ov), ta = $("textarea", cForm);
+  ta.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); cForm.requestSubmit(); } };
+  ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; };
+  cForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = ta.value.trim();
+    if (!body) return;
+    const btn = $("button", cForm); btn.disabled = true;
+    const { error } = await sb.from("task_comments").insert({ task_id: t.id, body, user_id: state.me.id });
+    btn.disabled = false;
+    if (error) return toast(friendly(error), true);
+    ta.value = ""; ta.style.height = "";
+    drawerDirty = true;
+    loadComments();
+  };
+
+  // ---- activity
+  const aList = $("#a-list", ov);
+  const loadActivity = async () => {
+    const { data } = await sb.from("task_activity").select("*").eq("task_id", t.id).order("created_at", { ascending: false }).limit(100);
+    if (!ov.isConnected) return;
+    aList.innerHTML = (data || []).length ? data.map((a) => `
+      <div class="tl-item"><span class="tl-dot a-${esc(a.action)}">${icon(ACT_ICON[a.action] || "history", "sm")}</span>
+        <div><p>${activityText(a)}</p><small>${timeAgo(a.created_at)} · ${fmtDateTime(a.created_at)}</small></div></div>`).join("")
+      : `<p class="meta">مفيش نشاط مسجل.</p>`;
+  };
+
+  // ---- tabs
+  $$("[data-dtab]", ov).forEach((b) => b.onclick = () => {
+    $$("[data-dtab]", ov).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", String(x === b)); });
+    $("#dtab-comments", ov).hidden = b.dataset.dtab !== "comments";
+    $("#dtab-activity", ov).hidden = b.dataset.dtab !== "activity";
+    if (b.dataset.dtab === "activity") loadActivity();
+  });
+
+  loadSubs(); loadComments();
+  drawerCh = sb.channel("task-" + t.id)
+    .on("postgres_changes", { event: "*", schema: "public", table: "task_comments", filter: `task_id=eq.${t.id}` }, () => debounced(loadComments))
+    .on("postgres_changes", { event: "*", schema: "public", table: "task_subtasks", filter: `task_id=eq.${t.id}` }, () => debounced(loadSubs))
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "task_activity", filter: `task_id=eq.${t.id}` }, () => {
+      if (!$("#dtab-activity", ov)?.hidden) debounced(loadActivity);
+    })
+    .subscribe();
+}
+
+/* =====================================================================
+   Kanban board
+   ===================================================================== */
+const getView = () => { try { return localStorage.getItem("dtt.view") === "board" ? "board" : "list"; } catch { return "list"; } };
+const setView = (v) => { try { localStorage.setItem("dtt.view", v); } catch { /* ignore */ } };
+
+function kbCard(t) {
+  const p = project(t.project_id), drag = canWorkOn(t);
+  return `<article class="kb-card ${t.status === "done" ? "done" : ""}" data-id="${t.id}" ${drag ? 'draggable="true"' : ""} tabindex="0" role="button" aria-label="${esc(t.title)}" style="${p ? `--c:${esc(p.color)}` : ""}">
+    ${p ? projChip(p) : ""}
+    <b>${esc(t.title)}</b>
+    <div class="kb-meta">${deadlineCell(t)}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span></div>
+    <div class="kb-foot">${avatarsCell(t.assignees)}<span class="progress"><span class="bar ${t.status === "done" ? "done" : ""}"><i style="width:${t.progress}%"></i></span><span class="num">${t.progress}%</span></span></div>
+  </article>`;
+}
+function boardHtml(list) {
+  return `<div class="board ${state.animate ? "stagger" : ""}">${Object.entries(STATUS).map(([k, l], ci) => {
+    const items = list.filter((t) => t.status === k);
+    return `<section class="kb-col" data-col="${k}" style="--i:${ci}" aria-label="${l}">
+      <header><span class="pill s-${k}">${l}</span><span class="kb-n">${items.length}</span></header>
+      <div class="kb-drop">${items.map(kbCard).join("") || `<div class="kb-empty">اسحب مهمة هنا</div>`}</div>
+    </section>`;
+  }).join("")}</div>`;
+}
+function wireBoard() {
+  let dragId = null;
+  $$(".kb-card").forEach((c) => {
+    c.onclick = () => openTask(c.dataset.id);
+    c.onkeydown = (e) => { if (e.key === "Enter") openTask(c.dataset.id); };
+    c.ondragstart = (e) => {
+      dragId = c.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", dragId);
+      requestAnimationFrame(() => c.classList.add("dragging"));
+    };
+    c.ondragend = () => { c.classList.remove("dragging"); $$(".kb-col.over").forEach((x) => x.classList.remove("over")); };
+  });
+  $$(".kb-col").forEach((col) => {
+    col.ondragover = (e) => { if (!dragId) return; e.preventDefault(); col.classList.add("over"); };
+    col.ondragleave = (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("over"); };
+    col.ondrop = (e) => {
+      e.preventDefault(); col.classList.remove("over");
+      const id = dragId; dragId = null;
+      if (id) moveTask(id, col.dataset.col);
+    };
+  });
+}
+async function moveTask(id, status) {
+  const t = state.tasks.find((x) => x.id === id);
+  if (!t || t.status === status) return;
+  if (!canWorkOn(t)) return toast("مش مسموح لك تعمل الخطوة دي", true);
+  const prev = { status: t.status, progress: t.progress, completed_at: t.completed_at };
+  t.status = status;
+  if (status === "done") { t.progress = 100; t.completed_at = new Date().toISOString(); } else t.completed_at = null;
+  renderTasks(); afterRender();
+  $(`.kb-card[data-id="${id}"]`)?.classList.add("landed");
+  const { error } = await sb.from("tasks").update({ status }).eq("id", id);
+  if (error) { Object.assign(t, prev); renderTasks(); afterRender(); return toast(friendly(error), true); }
+  if (status === "done") toast("برافو! المهمة اكتملت");
+}
+
+/* =====================================================================
+   Home: greeting + on-time leaderboard for everyone
+   ===================================================================== */
+const LEVELS = [[90, "ممتاز", "ok"], [75, "جيد جدًا", "good"], [60, "جيد", "warn"], [0, "يحتاج تحسين", "bad"]];
+const scoreOf = (r) => { const den = r.on_time + r.late + r.overdue; return den ? Math.round((r.on_time * 100) / den) : null; };
+const levelOf = (sc) => LEVELS.find(([m]) => sc >= m);
+
+async function loadScores(period) {
+  const key = String(period || "all"), c = state.scores[key];
+  if (c && Date.now() - c.at < 60000) return c.rows;
+  const { data, error } = await sb.rpc("team_scores", { p_days: period || null });
+  if (error) throw error;
+  state.scores[key] = { at: Date.now(), rows: data || [] };
+  return state.scores[key].rows;
+}
+
+function scoreRing(sc, size = 58) {
+  const r = (size - 8) / 2, c = 2 * Math.PI * r;
+  const lv = sc === null ? null : levelOf(sc);
+  const off = sc === null ? c : c * (1 - sc / 100);
+  return `<div class="ring lvl-${lv ? lv[2] : "none"}" style="width:${size}px;height:${size}px"><svg viewBox="0 0 ${size} ${size}" aria-hidden="true">
+    <circle class="bg" cx="${size / 2}" cy="${size / 2}" r="${r}"/>
+    <circle class="fg" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${c.toFixed(1)}" data-off="${off.toFixed(1)}"/>
+  </svg><b>${sc === null ? "—" : sc + "%"}</b></div>`;
+}
+
+function renderHome() {
+  const me = state.me, first = me.full_name.split(" ")[0];
+  const mine = state.tasks.filter((t) => t.assignees.includes(me.id));
+  const myOpen = mine.filter((t) => t.status !== "done");
+  const myLate = myOpen.filter(isOverdue).length;
+  const dueToday = myOpen.filter((t) => t.deadline && daysUntil(t.deadline) === 0).length;
+  const nextUp = sortTasks(myOpen).slice(0, 5);
+  const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
+  const dateLong = new Date().toLocaleDateString(LOCALE(), { weekday: "long", day: "numeric", month: "long" });
+  const periods = [[30, "آخر 30 يوم"], [90, "آخر 3 شهور"], [0, "من الأول"]];
+
+  $("#view").innerHTML = `
+    <div class="home-hero">
+      <div class="hero-text">
+        <p class="hero-date">${esc(dateLong)}</p>
+        <h1>${tx("{g}، {name}", { g: tx(greet), name: esc(first) })}</h1>
+        <p>${myLate ? tx("عندك {n} مهمة متأخرة، ابدأ بيها.", { n: myLate })
+          : myOpen.length ? tx("عندك {n} مهمة مفتوحة ومفيش حاجة متأخرة. كمّل كده!", { n: myOpen.length })
+          : tx("مفيش مهام مفتوحة عندك دلوقتي.")}</p>
+      </div>
+      <button class="btn primary" id="home-new">${icon("plus")}مهمة جديدة</button>
+    </div>
+    <div class="stats">
+      <a class="stat" href="#/tasks"><div class="ico">${icon("inbox")}</div><b data-count="${myOpen.length}">${myOpen.length}</b><span>مهامك المفتوحة</span></a>
+      <a class="stat t-bad" href="#/tasks"><div class="ico">${icon("flame")}</div><b data-count="${myLate}">${myLate}</b><span>متأخرة</span></a>
+      <a class="stat t-warn" href="#/tasks"><div class="ico">${icon("clock")}</div><b data-count="${dueToday}">${dueToday}</b><span>مطلوبة النهارده</span></a>
+      <div class="stat t-ok" id="my-score"><div class="ico">${icon("target")}</div><b>—</b><span>التزامك بالمواعيد</span></div>
+    </div>
+    <div class="home-grid">
+      <section class="lb-card">
+        <header class="lb-head">
+          <div><h2>${icon("trophy")}<span>أداء الفريق في المواعيد</span></h2>
+            <p>النسبة = المهام اللي اتسلمت في ميعادها ÷ (اللي اتسلمت + اللي اتأخرت أو لسه متأخرة)</p></div>
+          <div class="seg seg-sm" role="radiogroup" aria-label="الفترة">
+            ${periods.map(([d, l]) => `<label><input type="radio" name="period" value="${d}" ${state.homePeriod === d ? "checked" : ""}><span>${l}</span></label>`).join("")}
+          </div>
+        </header>
+        <div id="lb"><div class="lb-skel">${"<i></i>".repeat(6)}</div></div>
+      </section>
+      <aside class="side-col">
+        <section class="mini-card">
+          <h3>${icon("tasks", "sm")}مهامك الجاية</h3>
+          ${nextUp.length ? `<div class="next-list">${nextUp.map((t) => `
+            <button class="next-item" data-open="${t.id}">
+              <span class="pill s-${t.status}">${STATUS[t.status]}</span>
+              <b>${esc(t.title)}</b>${deadlineCell(t)}
+            </button>`).join("")}</div>
+            <a class="see-all" href="#/tasks">كل مهامك</a>`
+          : `<p class="meta" style="margin:0">مفيش مهام مفتوحة. استمتع بيومك!</p>`}
+        </section>
+        <section class="mini-card legend">
+          <h3>${icon("target", "sm")}إزاي بنقيس؟</h3>
+          ${LEVELS.map(([m, l, k]) => `<div class="lg-row"><span class="lg-dot lvl-${k}"></span><b>${l}</b><small>${m ? tx("{n}% أو أكتر", { n: m }) : tx("أقل من 60%")}</small></div>`).join("")}
+        </section>
+      </aside>
+    </div>`;
+
+  $("#home-new").onclick = () => openNewTask();
+  $$("[data-open]").forEach((b) => b.onclick = () => openTask(b.dataset.open));
+  $$("input[name=period]").forEach((r) => r.onchange = () => { state.homePeriod = Number(r.value); fillLeaderboard(true); });
+  fillLeaderboard(state.animate);
+}
+
+async function fillLeaderboard(animate) {
+  const box = $("#lb");
+  if (!box) return;
+  let rows;
+  try { rows = await loadScores(state.homePeriod); }
+  catch (e) { box.innerHTML = `<p class="err">${esc(friendly(e))}</p>`; return; }
+  if (!$("#lb")) return;
+  const me = state.me.id;
+  const people = rows.map((r) => ({ ...r, p: profile(r.user_id), score: scoreOf(r) })).filter((x) => x.p);
+  const ranked = people.filter((x) => x.score !== null).sort((a, b) => b.score - a.score || b.on_time - a.on_time || a.p.full_name.localeCompare(b.p.full_name, "ar"));
+  const noData = people.filter((x) => x.score === null).sort((a, b) => a.p.full_name.localeCompare(b.p.full_name, "ar"));
+  const sum = (k) => people.reduce((s, x) => s + x[k], 0);
+  const teamScore = scoreOf({ on_time: sum("on_time"), late: sum("late"), overdue: sum("overdue") });
+  const mineRow = people.find((x) => x.user_id === me);
+  const ms = $("#my-score b");
+  if (ms) ms.textContent = mineRow?.score === null || !mineRow ? "—" : mineRow.score + "%";
+  const canOpen = (id) => id === me || state.me.is_admin || isAncestor(me, id);
+
+  const row = (x, i) => {
+    const den = x.on_time + x.late + x.overdue, lv = levelOf(x.score);
+    return `<div class="lb-row ${x.user_id === me ? "me" : ""} ${canOpen(x.user_id) ? "link" : ""}" data-u="${x.user_id}" style="--i:${Math.min(i, 14)}" ${canOpen(x.user_id) ? 'tabindex="0" role="link"' : ""}>
+      <span class="rank r${i + 1}">${i + 1}</span>
+      <div class="person">${avatar(x.p)}<div><b>${esc(x.p.full_name)}</b><small>${esc(x.p.job_title || "")}</small></div></div>
+      <div class="lb-bar" title="${tx("{a} في الموعد · {b} اتأخرت · {c} متأخرة دلوقتي", { a: x.on_time, b: x.late, c: x.overdue })}">
+        <span class="seg-ok" style="width:${(x.on_time * 100) / den}%"></span><span class="seg-late" style="width:${(x.late * 100) / den}%"></span><span class="seg-over" style="width:${(x.overdue * 100) / den}%"></span>
+      </div>
+      <div class="lb-counts"><span class="c-ok">${icon("check", "sm")}${x.on_time}</span><span class="c-late">${icon("clock", "sm")}${x.late}</span><span class="c-over">${icon("flame", "sm")}${x.overdue}</span></div>
+      <span class="lvl-pill lvl-${lv[2]}">${lv[1]}</span>
+      ${scoreRing(x.score, 52)}
+    </div>`;
+  };
+
+  box.innerHTML = `
+    <div class="team-score">
+      ${scoreRing(teamScore, 92)}
+      <div><b>${teamScore === null ? tx("لسه مفيش بيانات كفاية") : tx("الفريق ملتزم بالمواعيد بنسبة {n}%", { n: teamScore })}</b>
+        <p>${tx("{a} مهمة اتسلمت في ميعادها · {b} اتسلمت متأخر · {c} متأخرة دلوقتي", { a: sum("on_time"), b: sum("late"), c: sum("overdue") })}</p></div>
+    </div>
+    ${ranked.length ? `<div class="lb-list ${animate ? "stagger" : ""}">${ranked.map(row).join("")}</div>` : ""}
+    ${noData.length ? `<div class="nodata"><h4>لسه مفيش مهام بمواعيد اتسلمت</h4><div class="nodata-list">${noData.map((x) => `<span class="nd-chip ${canOpen(x.user_id) ? "link" : ""}" data-u="${x.user_id}">${avatar(x.p, "sm")}${esc(x.p.full_name)}</span>`).join("")}</div></div>` : ""}`;
+
+  $$("[data-u]", box).forEach((el) => {
+    if (!canOpen(el.dataset.u)) return;
+    const go = () => { location.hash = `#/tasks?user=${el.dataset.u}`; };
+    el.onclick = go;
+    el.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => $$("#lb .ring .fg").forEach((c) => { c.style.strokeDashoffset = c.dataset.off; })));
+}
+
+/* =====================================================================
+   Weekly report (managers) with Excel + PDF export
+   ===================================================================== */
+function weekRange(offset) {
+  const d = today();
+  const start = new Date(d); start.setDate(d.getDate() - d.getDay() - offset * 7); // weeks start on Sunday
+  const end = new Date(start); end.setDate(start.getDate() + 7);
+  return { start, end };
+}
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function buildReport() {
+  const { start, end } = weekRange(state.reportWeek);
+  const inRange = (iso) => { if (!iso) return false; const x = new Date(iso); return x >= start && x < end; };
+  const people = (state.me.is_admin ? state.profiles.filter((p) => p.id !== state.me.id) : descendants(state.me.id)).filter((p) => p.active);
+  const ids = new Set(people.map((p) => p.id));
+  const doneDay = (t) => ymd(new Date(t.completed_at));
+  const onTimeT = (t) => t.deadline && doneDay(t) <= t.deadline;
+  const rows = people.map((p) => {
+    const mine = state.tasks.filter((t) => t.assignees.includes(p.id));
+    const completed = mine.filter((t) => t.status === "done" && inRange(t.completed_at));
+    const withDl = completed.filter((t) => t.deadline);
+    const onTime = withDl.filter(onTimeT).length;
+    const late = withDl.length - onTime;
+    const open = mine.filter((t) => t.status !== "done");
+    return {
+      p, completed: completed.length, onTime, late, overdue: open.filter(isOverdue).length, open: open.length,
+      created: mine.filter((t) => inRange(t.created_at)).length,
+      rate: withDl.length ? Math.round((onTime * 100) / withDl.length) : null,
+    };
+  }).sort((a, b) => b.completed - a.completed || a.p.full_name.localeCompare(b.p.full_name, "ar"));
+  const teamTasks = state.tasks.filter((t) => t.assignees.some((u) => ids.has(u)));
+  const completedList = teamTasks.filter((t) => t.status === "done" && inRange(t.completed_at))
+    .sort((a, b) => b.completed_at.localeCompare(a.completed_at));
+  const overdueList = teamTasks.filter(isOverdue).sort((a, b) => a.deadline.localeCompare(b.deadline));
+  const tot = rows.reduce((a, r) => ({ completed: a.completed + r.completed, onTime: a.onTime + r.onTime, late: a.late + r.late, created: a.created + r.created }), { completed: 0, onTime: 0, late: 0, created: 0 });
+  tot.overdue = overdueList.length;
+  tot.rate = tot.onTime + tot.late ? Math.round((tot.onTime * 100) / (tot.onTime + tot.late)) : null;
+  return { start, end, rows, completedList, overdueList, tot, onTimeT };
+}
+
+function renderReports() {
+  const R = buildReport();
+  const last = new Date(R.end); last.setDate(last.getDate() - 1);
+  const range = `${fmtDate(ymd(R.start))} – ${fmtDate(ymd(last))}`;
+  const weekLabel = (i) => {
+    const w = weekRange(i), l = new Date(w.end); l.setDate(l.getDate() - 1);
+    const r = `${fmtDate(ymd(w.start))} – ${fmtDate(ymd(l))}`;
+    return i === 0 ? tx("الأسبوع ده ({r})", { r }) : i === 1 ? tx("الأسبوع اللي فات ({r})", { r }) : r;
+  };
+  const names = (t) => t.assignees.map(profile).filter(Boolean).map((p) => esc(p.full_name)).join(LANG === "en" ? ", " : "، ");
+
+  $("#view").innerHTML = `
+    <div class="page-head">
+      <div><h1>التقرير الأسبوعي</h1><p>${tx(state.me.is_admin ? "كل الفريق" : "الموظفين تحت إدارتك")} · ${range}</p></div>
+      <div class="report-tools no-print">
+        <select class="input" id="rep-week" aria-label="الأسبوع">${Array.from({ length: 8 }, (_, i) => `<option value="${i}" ${state.reportWeek === i ? "selected" : ""}>${weekLabel(i)}</option>`).join("")}</select>
+        <button class="btn" id="rep-xlsx">${icon("download", "sm")}Excel</button>
+        <button class="btn" id="rep-pdf">${icon("printer", "sm")}PDF</button>
+      </div>
+    </div>
+    <div class="print-only print-head"><img src="assets/logo-white.png" alt=""><div><b>Digital Team Tasks Tracker</b><span>${tx("التقرير الأسبوعي")} · ${range}</span></div></div>
+    <div class="stats">
+      <div class="stat t-ok"><div class="ico">${icon("check")}</div><b data-count="${R.tot.completed}">${R.tot.completed}</b><span>مهام اتسلمت</span></div>
+      <div class="stat"><div class="ico">${icon("target")}</div><b>${R.tot.rate === null ? "—" : R.tot.rate + "%"}</b><span>الالتزام بالمواعيد</span></div>
+      <div class="stat t-warn"><div class="ico">${icon("clock")}</div><b data-count="${R.tot.late}">${R.tot.late}</b><span>اتسلمت متأخر</span></div>
+      <div class="stat t-bad"><div class="ico">${icon("flame")}</div><b data-count="${R.tot.overdue}">${R.tot.overdue}</b><span>متأخرة دلوقتي</span></div>
+    </div>
+    <section class="rep-sec">
+      <h3>${icon("users", "sm")}ملخص الموظفين</h3>
+      ${R.rows.length ? `<div class="table-wrap"><table class="t">
+        <thead><tr><th>الموظف</th><th>مهام جديدة</th><th>اتسلمت</th><th>في الموعد</th><th>متأخر</th><th>متأخرة دلوقتي</th><th>مفتوحة</th><th>الالتزام بالمواعيد</th></tr></thead>
+        <tbody>${R.rows.map((r) => `<tr>
+          <td><div class="person">${avatar(r.p, "sm")}<div><b>${esc(r.p.full_name)}</b><small>${esc(r.p.job_title || "")}</small></div></div></td>
+          <td class="num">${r.created}</td><td class="num">${r.completed}</td><td class="num">${r.onTime}</td>
+          <td class="num ${r.late ? "bad" : ""}">${r.late}</td><td class="num ${r.overdue ? "bad" : ""}">${r.overdue}</td><td class="num">${r.open}</td>
+          <td>${r.rate === null ? "—" : `<span class="lvl-pill lvl-${levelOf(r.rate)[2]}">${r.rate}%</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty"><div class="ill">${icon("users")}</div><b>مفيش موظفين تحت إدارتك لسه</b></div>`}
+    </section>
+    <div class="rep-two">
+      <section class="rep-sec">
+        <h3>${icon("check", "sm")}اتسلمت الأسبوع ده <span class="n">${R.completedList.length}</span></h3>
+        ${R.completedList.length ? `<ul class="rep-list">${R.completedList.map((t) => `<li>
+          <span class="dot ${!t.deadline ? "" : R.onTimeT(t) ? "ok" : "late"}"></span>
+          <div><b>${esc(t.title)}</b><small>${names(t)} · ${fmtDate(t.completed_at)}</small></div>
+          ${t.deadline ? `<span class="lvl-pill lvl-${R.onTimeT(t) ? "ok" : "warn"}">${R.onTimeT(t) ? "في الموعد" : "متأخر"}</span>` : ""}</li>`).join("")}</ul>`
+        : `<p class="meta">مفيش مهام اتسلمت في الفترة دي.</p>`}
+      </section>
+      <section class="rep-sec">
+        <h3>${icon("flame", "sm")}متأخرة دلوقتي <span class="n">${R.overdueList.length}</span></h3>
+        ${R.overdueList.length ? `<ul class="rep-list">${R.overdueList.map((t) => `<li>
+          <span class="dot late"></span>
+          <div><b>${esc(t.title)}</b><small>${names(t)} · ${tx("الموعد كان {d}", { d: fmtDate(t.deadline) })}</small></div>
+          <span class="lvl-pill lvl-bad">${tx("متأخرة {n} يوم", { n: -daysUntil(t.deadline) })}</span></li>`).join("")}</ul>`
+        : `<p class="meta">مفيش مهام متأخرة. ممتاز!</p>`}
+      </section>
+    </div>`;
+
+  $("#rep-week").onchange = (e) => { state.reportWeek = Number(e.target.value); state.animate = true; route(); };
+  $("#rep-pdf").onclick = () => window.print();
+  $("#rep-xlsx").onclick = () => exportReportXlsx(R, range);
+}
+
+let xlsxLoading = null;
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  xlsxLoading = xlsxLoading || new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = () => res(window.XLSX);
+    s.onerror = () => { xlsxLoading = null; rej(new Error(tx("مقدرناش نحمّل مكتبة Excel، جرّب تاني."))); };
+    document.head.append(s);
+  });
+  return xlsxLoading;
+}
+async function exportReportXlsx(R, range) {
+  const btn = $("#rep-xlsx"); btn.disabled = true;
+  try {
+    const XLSX = await loadXlsx();
+    const nm = (t) => t.assignees.map(profile).filter(Boolean).map((p) => p.full_name).join(", ");
+    const wb = XLSX.utils.book_new();
+    const sheet = (rows, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = widths.map((w) => ({ wch: w })); return ws; };
+    XLSX.utils.book_append_sheet(wb, sheet([
+      [tx("التقرير الأسبوعي"), range],
+      [],
+      [tx("مهام اتسلمت"), R.tot.completed],
+      [tx("في الموعد"), R.tot.onTime],
+      [tx("اتسلمت متأخر"), R.tot.late],
+      [tx("متأخرة دلوقتي"), R.tot.overdue],
+      [tx("الالتزام بالمواعيد"), R.tot.rate === null ? "—" : R.tot.rate + "%"],
+    ], [26, 30]), tx("الملخص"));
+    XLSX.utils.book_append_sheet(wb, sheet([
+      [tx("الموظف"), tx("المسمى الوظيفي"), tx("مهام جديدة"), tx("اتسلمت"), tx("في الموعد"), tx("متأخر"), tx("متأخرة دلوقتي"), tx("مفتوحة"), tx("الالتزام بالمواعيد")],
+      ...R.rows.map((r) => [r.p.full_name, r.p.job_title || "", r.created, r.completed, r.onTime, r.late, r.overdue, r.open, r.rate === null ? "—" : r.rate + "%"]),
+    ], [24, 22, 12, 10, 10, 10, 14, 10, 16]), tx("الموظفين"));
+    XLSX.utils.book_append_sheet(wb, sheet([
+      [tx("المهمة"), tx("المسؤولين"), tx("المشروع"), tx("الموعد النهائي"), tx("اتسلمت يوم"), tx("الحالة")],
+      ...R.completedList.map((t) => [t.title, nm(t), project(t.project_id)?.name || "", t.deadline || "", ymd(new Date(t.completed_at)), !t.deadline ? "" : R.onTimeT(t) ? tx("في الموعد") : tx("متأخر")]),
+    ], [36, 28, 20, 14, 14, 12]), tx("اتسلمت"));
+    XLSX.utils.book_append_sheet(wb, sheet([
+      [tx("المهمة"), tx("المسؤولين"), tx("المشروع"), tx("الموعد النهائي"), tx("أيام التأخير"), tx("نسبة الإنجاز")],
+      ...R.overdueList.map((t) => [t.title, nm(t), project(t.project_id)?.name || "", t.deadline, -daysUntil(t.deadline), t.progress + "%"]),
+    ], [36, 28, 20, 14, 12, 12]), tx("متأخرة"));
+    if (LANG !== "en") wb.Workbook = { Views: [{ RTL: true }] };
+    XLSX.writeFile(wb, `weekly-report-${ymd(R.start)}.xlsx`);
+    toast("اتنزل ملف الإكسل");
+  } catch (e) { toast(friendly(e), true); }
+  btn.disabled = false;
+}
+
+/* =====================================================================
    Settings (language + theme, saved on this device)
    ===================================================================== */
 function renderSettings() {
@@ -1086,7 +1779,7 @@ function renderSettings() {
     ["system", "حسب الجهاز", "بيتبع إعدادات جهازك تلقائيًا."],
   ];
   $("#view").innerHTML = `
-    <div class="page-head"><div><h1>الإعدادات</h1><p>تخصيص شكل ولغة النظام على الجهاز ده.</p></div></div>
+    <div class="page-head"><div><h1>الإعدادات</h1><p>تخصيص شكل ولغة النظام.</p></div></div>
     <div class="settings">
       <section class="set-card">
         <div class="set-head"><div class="ico">${icon("globe")}</div><div><h3>اللغة</h3><p>اختار لغة الواجهة.</p></div></div>
@@ -1115,16 +1808,18 @@ function renderSettings() {
           <button class="btn sm" id="set-pass">${icon("lock", "sm")}<span>تغيير كلمة السر</span></button>
         </div>
       </section>
-      <p class="meta">الإعدادات دي محفوظة على الجهاز ده بس.</p>
+      <p class="meta">الإعدادات دي محفوظة مع حسابك، وبتطبق على أي جهاز تدخل منه.</p>
     </div>`;
   $$("[data-lang]").forEach((b) => b.onclick = () => {
     if (b.dataset.lang === LANG) return;
     setLang(b.dataset.lang);
+    savePrefs();
     renderShell();
     toast(tx("اتحفظت الإعدادات"));
   });
   $$("[data-theme-pick]").forEach((b) => b.onclick = () => {
     setTheme(b.dataset.themePick);
+    savePrefs();
     state.animate = false; route();
     toast(tx("اتحفظت الإعدادات"));
   });

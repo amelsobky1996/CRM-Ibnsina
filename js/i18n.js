@@ -164,6 +164,74 @@ const EN = {
   "تفعيل حساب {name}؟": "Reactivate {name}'s account?",
   "حذف {name} نهائيًا؟ الموظفين اللي تحته هيتنقلوا لمديره.": "Permanently delete {name}? Their reports will move to their manager.",
   "كلمة سر جديدة لـ {name}": "New password for {name}",
+  // ---------- v4: navigation, notifications
+  "الرئيسية": "Home", "التقارير": "Reports", "الإشعارات": "Notifications", "تحديد الكل كمقروء": "Mark all as read",
+  "مفيش إشعارات": "No notifications",
+  "هتوصلك هنا لما حد يسند لك مهمة أو يعلّق عليها أو موعد يقرّب.": "You'll see updates here when someone assigns you a task, comments on it, or a deadline is near.",
+  "المهمة دي مبقتش موجودة": "This task no longer exists", "حد من الفريق": "A teammate", "النظام": "System",
+  "{actor} أسند لك مهمة {title}": "{actor} assigned you {title}",
+  "{actor} علّق على {title}": "{actor} commented on {title}",
+  "{actor} خلّص مهمة {title}": "{actor} completed {title}",
+  "موعد تسليم {title} بكرة": "{title} is due tomorrow",
+  "دلوقتي": "just now", "من {n} دقيقة": "{n}m ago", "من {n} ساعة": "{n}h ago", "من {n} يوم": "{n}d ago",
+
+  // ---------- v4: drawer
+  "بتتحسب تلقائيًا من الخطوات": "Calculated from the checklist", "الخطوات": "Checklist",
+  "أضف خطوة واضغط Enter": "Add a step and press Enter", "خطوة جديدة": "New step", "إضافة": "Add",
+  "حذف الخطوة": "Delete step",
+  "مفيش خطوات لسه. قسّم المهمة لخطوات صغيرة ونسبة الإنجاز هتتحسب لوحدها.": "No steps yet. Break the task into small steps and progress will update automatically.",
+  "التعليقات": "Comments", "سجل النشاط": "Activity", "اكتب تعليق…": "Write a comment…", "إرسال": "Send",
+  "حذف التعليق": "Delete comment", "مفيش تعليقات لسه. ابدأ النقاش هنا.": "No comments yet. Start the conversation here.",
+  "مفيش نشاط مسجل.": "No activity yet.",
+  "{a} أنشأ المهمة": "{a} created the task",
+  "{a} غيّر الحالة من {from} إلى {to}": "{a} changed status from {from} to {to}",
+  "{a} حدّث الإنجاز إلى {n}%": "{a} updated progress to {n}%",
+  "{a} غيّر الموعد إلى {d}": "{a} changed the deadline to {d}",
+  "{a} شال الموعد النهائي": "{a} removed the deadline",
+  "{a} غيّر العنوان إلى {t}": "{a} renamed the task to {t}",
+  "{a} غيّر الأولوية إلى {p}": "{a} set priority to {p}",
+  "{a} نقل المهمة لمشروع {p}": "{a} moved the task to {p}",
+  "{a} شال المهمة من المشروع": "{a} removed the task from its project",
+  "{a} أسند المهمة إلى {u}": "{a} assigned {u}",
+  "{a} شال {u} من المهمة": "{a} removed {u} from the task",
+  "{a} رفع ملف {f}": "{a} uploaded {f}", "{a} حذف ملف {f}": "{a} deleted {f}",
+  "{a} أضاف خطوة {s}": "{a} added step {s}", "{a} خلّص خطوة {s}": "{a} completed step {s}",
+  "{a} رجّع خطوة {s} لغير مكتملة": "{a} reopened step {s}",
+
+  // ---------- v4: kanban
+  "طريقة العرض": "View", "قائمة": "List", "كانبان": "Board", "اسحب مهمة هنا": "Drag a task here",
+
+  // ---------- v4: home
+  "صباح الخير": "Good morning", "مساء الخير": "Good evening", "{g}، {name}": "{g}, {name}",
+  "عندك {n} مهمة متأخرة، ابدأ بيها.": "You have {n} overdue tasks. Start with those.",
+  "عندك {n} مهمة مفتوحة ومفيش حاجة متأخرة. كمّل كده!": "You have {n} open tasks and nothing overdue. Keep it up!",
+  "مفيش مهام مفتوحة عندك دلوقتي.": "You have no open tasks right now.",
+  "مهامك المفتوحة": "Your open tasks", "مطلوبة النهارده": "Due today", "التزامك بالمواعيد": "Your on-time rate",
+  "أداء الفريق في المواعيد": "Team on-time delivery",
+  "النسبة = المهام اللي اتسلمت في ميعادها ÷ (اللي اتسلمت + اللي اتأخرت أو لسه متأخرة)": "Score = tasks delivered on time ÷ (delivered + late or still overdue)",
+  "الفترة": "Period", "آخر 30 يوم": "Last 30 days", "آخر 3 شهور": "Last 3 months", "من الأول": "All time",
+  "مهامك الجاية": "Up next", "كل مهامك": "All your tasks", "مفيش مهام مفتوحة. استمتع بيومك!": "Nothing open. Enjoy your day!",
+  "إزاي بنقيس؟": "How it's scored", "ممتاز": "Excellent", "جيد جدًا": "Very good", "جيد": "Good", "يحتاج تحسين": "Needs improvement",
+  "{n}% أو أكتر": "{n}% or more", "أقل من 60%": "Below 60%",
+  "لسه مفيش مهام بمواعيد اتسلمت": "No delivered tasks with deadlines yet",
+  "لسه مفيش بيانات كفاية": "Not enough data yet",
+  "الفريق ملتزم بالمواعيد بنسبة {n}%": "The team delivers on time {n}% of the time",
+  "{a} مهمة اتسلمت في ميعادها · {b} اتسلمت متأخر · {c} متأخرة دلوقتي": "{a} delivered on time · {b} delivered late · {c} overdue now",
+  "{a} في الموعد · {b} اتأخرت · {c} متأخرة دلوقتي": "{a} on time · {b} late · {c} overdue now",
+
+  // ---------- v4: reports
+  "التقرير الأسبوعي": "Weekly report", "كل الفريق": "Whole team", "الأسبوع": "Week",
+  "مهام اتسلمت": "Tasks delivered", "اتسلمت متأخر": "Delivered late", "متأخرة دلوقتي": "Overdue now",
+  "ملخص الموظفين": "By employee", "مهام جديدة": "New tasks", "اتسلمت": "Delivered", "في الموعد": "On time", "متأخر": "Late",
+  "اتسلمت الأسبوع ده": "Delivered this week", "مفيش مهام اتسلمت في الفترة دي.": "Nothing was delivered in this period.",
+  "مفيش مهام متأخرة. ممتاز!": "Nothing overdue. Great!", "اتنزل ملف الإكسل": "Excel file downloaded",
+  "الأسبوع ده ({r})": "This week ({r})", "الأسبوع اللي فات ({r})": "Last week ({r})", "الموعد كان {d}": "Was due {d}",
+  "الملخص": "Summary", "اتسلمت يوم": "Delivered on", "أيام التأخير": "Days late",
+  "مقدرناش نحمّل مكتبة Excel، جرّب تاني.": "Couldn't load the Excel library. Try again.",
+
+  // ---------- v4: settings
+  "تخصيص شكل ولغة النظام.": "Personalize how the app looks.",
+  "الإعدادات دي محفوظة مع حسابك، وبتطبق على أي جهاز تدخل منه.": "Saved to your account and applied on any device you sign in from.",
 };
 
 /** Translate an Arabic source string (with optional {vars}). */
