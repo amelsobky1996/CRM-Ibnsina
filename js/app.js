@@ -199,6 +199,8 @@ const canWorkOn = (t) => canManageTask(t) || t.assignees.includes(state.me.id);
 const canDeleteTask = (t) => state.me.is_admin || t.created_by === state.me.id || (t.created_by && isAncestor(state.me.id, t.created_by));
 const canEditProject = (p) => state.me.is_admin || p.created_by === state.me.id || p.lead_id === state.me.id ||
   (p.created_by && isAncestor(state.me.id, p.created_by));
+// must mirror the "projects delete" RLS policy
+const canDeleteProject = (p) => state.me.is_admin || p.created_by === state.me.id || (p.created_by && isAncestor(state.me.id, p.created_by));
 
 /* =====================================================================
    Data
@@ -618,8 +620,12 @@ function renderTasks() {
   $("#view").innerHTML = `
     <div class="page-head">
       <div><h1>${filterProj ? esc(filterProj.name) : "المهام"}</h1>
-        <p>${filterProj ? esc(filterProj.description || "مهام المشروع") : tx("أهلاً {name}، عندك {n} مهمة مفتوحة.", { name: esc(firstName), n: myOpen })}</p></div>
-      <button class="btn primary" id="new-task">${icon("plus")}مهمة جديدة</button>
+        <p>${filterProj ? esc(filterProj.description || "مهام المشروع") : tx("أهلاً {name}، عندك {n} مهمة مفتوحة.", { name: esc(firstName), n: myOpen })}</p>
+        ${filterProj ? `<div class="proj-lead-line">${profile(filterProj.lead_id) ? `${avatar(profile(filterProj.lead_id), "sm")}<span>${tx("المسؤول: {name}", { name: esc(profile(filterProj.lead_id).full_name) })}</span>` : "<span>بدون مسؤول</span>"}</div>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${filterProj && canEditProject(filterProj) ? `<button class="btn ghost" id="edit-cur-proj">${icon("edit")}تعديل المشروع</button>` : ""}
+        <button class="btn primary" id="new-task">${icon("plus")}مهمة جديدة</button>
+      </div>
     </div>
     <div class="stats">
       ${statCard("open", "مفتوحة", "inbox", "", stats.open)}
@@ -664,6 +670,7 @@ function renderTasks() {
     </div>`}`;
 
   $("#new-task").onclick = () => openNewTask();
+  const ecp = $("#edit-cur-proj"); if (ecp) ecp.onclick = () => openProjectModal(filterProj);
   $$("[data-view]").forEach((b) => b.onclick = () => {
     if (b.dataset.view === getView()) return;
     setView(b.dataset.view);
@@ -1113,7 +1120,7 @@ function renderProjects() {
         const ppl = s.people.map(profile).filter(Boolean);
         return `
         <div class="proj-card ${p.status === "archived" ? "archived" : ""}" style="--c:${esc(p.color)};--i:${Math.min(i, 12)}" data-proj="${p.id}" tabindex="0" role="link" aria-label="${esc(p.name)}">
-          ${canEditProject(p) ? `<button class="icon-btn proj-edit" data-edit-proj="${p.id}" aria-label="تعديل المشروع" style="color:var(--ink-2)">${icon("edit", "sm")}</button>` : ""}
+          ${canEditProject(p) ? `<button class="proj-edit" data-edit-proj="${p.id}" title="تعديل المشروع" aria-label="تعديل المشروع">${icon("edit", "sm")}<span>تعديل</span></button>` : ""}
           <div class="proj-top">
             ${ring(s.progress, p.color)}
             <div class="grow"><h3>${esc(p.name)}</h3><p>${esc(p.description || (p.status === "archived" ? "مشروع مؤرشف" : "بدون وصف"))}</p></div>
@@ -1161,7 +1168,7 @@ function openProjectModal(p = null) {
       ${!isNew ? `<label class="check"><input type="checkbox" name="archived" ${p.status === "archived" ? "checked" : ""}> مشروع مؤرشف (مش هيظهر في اختيارات المهام الجديدة)</label>` : ""}
       <p class="err" id="pf2-err"></p>
       <div class="modal-foot">
-        ${!isNew ? `<button type="button" class="btn danger ghost" id="del-proj">حذف المشروع</button><span class="spacer"></span>` : ""}
+        ${!isNew && canDeleteProject(p) ? `<button type="button" class="btn danger ghost" id="del-proj">حذف المشروع</button>` : ""}<span class="spacer"></span>
         <button type="button" class="btn ghost" data-close>إلغاء</button>
         <button class="btn primary" type="submit">${isNew ? "إنشاء المشروع" : "حفظ"}</button>
       </div>
@@ -1192,9 +1199,11 @@ function openProjectModal(p = null) {
   const del = $("#del-proj", ov);
   if (del) del.onclick = async () => {
     const n = state.tasks.filter((t) => t.project_id === p.id).length;
-    if (!confirm(tx("حذف مشروع «{name}»؟", { name: p.name }) + (n ? " " + tx("المهام ({n}) مش هتتحذف، هتفضل من غير مشروع.", { n }) : ""))) return;
-    const { error } = await sb.from("projects").delete().eq("id", p.id);
+    const ok = await confirmDialog({ title: tx("حذف مشروع «{name}»؟", { name: p.name }), body: n ? tx("المهام ({n}) مش هتتحذف، هتفضل من غير مشروع.", { n }) : "", ok: "حذف" });
+    if (!ok) return;
+    const { data, error } = await sb.from("projects").delete().eq("id", p.id).select("id");
     if (error) return err(friendly(error));
+    if (!data?.length) return err("مش مسموح لك تحذف المشروع ده");
     await Promise.all([loadProjects(), loadTasks()]);
     closeModal(); state.animate = true; route(); toast("اتحذف المشروع");
   };

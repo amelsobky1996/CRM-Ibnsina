@@ -313,3 +313,17 @@ alter table public.profiles add column if not exists gender text check (gender i
 -- The full SQL is stored in the project's migration history:
 --   supabase db pull   (or Dashboard → Database → Migrations)
 -- =====================================================================
+
+-- ======================== v5: project edit hand-off ========================
+drop policy if exists "projects update" on public.projects;
+create policy "projects update" on public.projects for update to authenticated
+  using (created_by = auth.uid() or lead_id = auth.uid() or public.is_admin() or public.is_ancestor(auth.uid(), created_by))
+  with check (true);
+create or replace function public.projects_lock_created_by() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.created_by is distinct from old.created_by and auth.uid() is not null then new.created_by := old.created_by; end if;
+  return new;
+end $$;
+drop trigger if exists projects_lock_created_by on public.projects;
+create trigger projects_lock_created_by before update on public.projects for each row execute function public.projects_lock_created_by();

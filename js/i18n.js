@@ -42,7 +42,7 @@ const EN = {
   // ---------- navigation / shell
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
-  "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More", "مش مسموح لك تحذف المشروع ده": "You're not allowed to delete this project",
   "اتغيرت الصورة": "Photo updated",
 
   // ---------- tasks list
