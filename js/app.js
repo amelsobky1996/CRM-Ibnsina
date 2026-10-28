@@ -18,6 +18,9 @@ const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "�
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  dots: '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/>',
   camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
   chev: '<path d="M15 6l-6 6 6 6"/>',
@@ -1955,11 +1958,14 @@ async function loadMessages() {
   if (!error) state.msgs = (data || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 }
 const partnerOf = (m) => (m.sender_id === state.me.id ? m.recipient_id : m.sender_id);
-const chatUnread = (pid) => state.msgs.filter((m) => m.recipient_id === state.me.id && !m.read_at && (!pid || m.sender_id === pid)).length;
+// hidden on my side?
+const msgVisible = (m) => !((m.sender_id === state.me.id && m.deleted_for_sender) || (m.recipient_id === state.me.id && m.deleted_for_recipient));
+const visibleMsgs = () => state.msgs.filter(msgVisible);
+const chatUnread = (pid) => visibleMsgs().filter((m) => m.recipient_id === state.me.id && !m.read_at && !m.deleted_at && (!pid || m.sender_id === pid)).length;
 
 function conversations() {
   const last = new Map();
-  for (const m of state.msgs) last.set(partnerOf(m), m);
+  for (const m of visibleMsgs()) last.set(partnerOf(m), m);
   return [...last.entries()].map(([pid, m]) => ({ pid, last: m })).sort((a, b) => new Date(b.last.created_at) - new Date(a.last.created_at));
 }
 
@@ -2011,7 +2017,7 @@ function fillConvs(activeId) {
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
   const row = (p, last) => {
     const n = chatUnread(p.id);
-    const preview = last ? (last.sender_id === state.me.id ? tx("انت: ") : "") + last.body.replace(/\s+/g, " ") : (p.job_title || "");
+    const preview = last ? (last.sender_id === state.me.id ? tx("انت: ") : "") + (last.deleted_at ? tx("اتمسحت الرسالة دي") : last.body.replace(/\s+/g, " ")) : (p.job_title || "");
     return `<a class="conv ${p.id === activeId ? "on" : ""} ${n ? "unread" : ""}" href="#/chat?with=${p.id}">
       ${avatar(p)}
       <span class="conv-main"><span class="conv-top"><b><bdi>${esc(p.full_name)}</bdi></b>${last ? `<time>${fmtListTime(last.created_at)}</time>` : ""}</span>
@@ -2032,6 +2038,7 @@ function renderThread(p) {
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${avatar(p)}
       <div class="thread-who"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
+      <button class="icon-btn thread-clear" id="thread-clear" title="مسح المحادثة عندي" aria-label="مسح المحادثة عندي">${icon("trash")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
     <form class="composer" id="composer">
@@ -2039,6 +2046,16 @@ function renderThread(p) {
       <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
     </form>`;
   fillThread(p.id, true);
+  $("#thread-clear").onclick = async () => {
+    if (!visibleMsgs().some((m) => partnerOf(m) === p.id)) return toast(tx("المحادثة فاضية أصلاً"));
+    const ok = await confirmDialog({ title: tx("مسح المحادثة مع {name}؟", { name: p.full_name }), body: tx("الرسايل هتتمسح عندك انت بس، و{name} هيفضل شايفها.", { name: p.full_name.split(" ")[0] }), ok: "مسح" });
+    if (!ok) return;
+    const { error } = await sb.rpc("clear_conversation", { p_partner: p.id });
+    if (error) return toast(friendly(error), true);
+    const me = state.me.id;
+    state.msgs.forEach((m) => { if (partnerOf(m) === p.id) { if (m.sender_id === me) m.deleted_for_sender = true; else m.deleted_for_recipient = true; } });
+    fillThread(p.id, true); fillConvs(p.id); renderChatBadges(); toast(tx("اتمسحت المحادثة"));
+  };
   const ta = $("#msg-in"), btn = $(".send-btn", pane);
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
   grow();
@@ -2054,7 +2071,7 @@ function renderThread(p) {
 function fillThread(pid, jump = false) {
   const box = $("#thread-msgs"); if (!box) return;
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  const msgs = state.msgs.filter((m) => partnerOf(m) === pid);
+  const msgs = visibleMsgs().filter((m) => partnerOf(m) === pid);
   if (!msgs.length) {
     box.innerHTML = `<div class="thread-empty">${avatar(profile(pid), "lg")}<b>${esc(profile(pid)?.full_name || "")}</b><span>ابدأ المحادثة برسالة.</span></div>`;
     return;
@@ -2066,20 +2083,72 @@ function fillThread(pid, jump = false) {
     const mine = m.sender_id === state.me.id;
     const grouped = prev && prev.sender_id === m.sender_id && (new Date(m.created_at) - new Date(prev.created_at)) < 5 * 60000;
     const status = mine ? (m._pending ? `<span class="tick">${icon("clock", "sm")}</span>` : m._failed ? `<span class="tick bad">${icon("alert", "sm")}</span>` : `<span class="tick ${m.read_at ? "read" : ""}" title="${m.read_at ? tx("اتقرت") : tx("اتبعتت")}">${icon("check", "sm")}${m.read_at ? icon("check", "sm") : ""}</span>`) : "";
-    html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""}" data-mid="${m.id}">
-      <div class="bubble"><span class="txt" dir="auto">${msgHtml(m.body)}</span><span class="meta"><time>${fmtClock(m.created_at)}</time>${status}</span></div>
+    const canAct = !m._pending && !m._failed;
+    html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""} ${m.deleted_at ? "deleted" : ""}" data-mid="${m.id}">
+      <div class="bubble-row">
+        <div class="bubble">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `<span class="txt" dir="auto">${msgHtml(m.body)}</span>`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
+        ${canAct ? `<button class="msg-act" data-act="${m.id}" aria-label="${tx("خيارات الرسالة")}" title="${tx("خيارات الرسالة")}">${icon("dots", "sm")}</button>` : ""}
+      </div>
       ${m._failed ? `<button class="retry" data-retry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
     </div>`;
     prev = m;
   }
     box.innerHTML = html;
   if (jump || nearBottom) box.scrollTop = box.scrollHeight;
+  $$("[data-act]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openMsgActions(b.dataset.act); });
+  // long-press / right-click on a bubble opens the same menu
+  $$(".msg[data-mid] .bubble", box).forEach((bub) => {
+    const id = bub.closest(".msg").dataset.mid;
+    if (id.startsWith("tmp-")) return;
+    bub.addEventListener("contextmenu", (e) => { e.preventDefault(); openMsgActions(id); });
+    let t;
+    bub.addEventListener("touchstart", () => { t = setTimeout(() => { t = null; navigator.vibrate?.(15); openMsgActions(id); }, 480); }, { passive: true });
+    const cancel = () => clearTimeout(t);
+    bub.addEventListener("touchend", cancel); bub.addEventListener("touchmove", cancel); bub.addEventListener("touchcancel", cancel);
+  });
   $$("[data-retry]", box).forEach((b) => b.onclick = () => {
     const m = state.msgs.find((x) => x.id === b.dataset.retry);
     if (!m) return;
     state.msgs = state.msgs.filter((x) => x !== m);
     sendMessage(m.recipient_id, null, m.body);
   });
+}
+
+function openMsgActions(id) {
+  const m = state.msgs.find((x) => x.id === id);
+  if (!m || $("#modal-root .overlay")) return;
+  const mine = m.sender_id === state.me.id;
+  const ov = openModal(`
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(m.body.length > 160 ? m.body.slice(0, 160) + "…" : m.body)}</div>
+    <div class="sheet-list">
+      ${!m.deleted_at ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
+      <button class="sheet-item danger" data-do="me"><span class="si-ic">${icon("trash")}</span><span>مسح عندي</span></button>
+      ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
+    </div>
+    <button class="btn ghost" data-close style="width:100%">إلغاء</button>`, { label: "خيارات الرسالة" });
+  ov.classList.add("sheet");
+  $("[data-close]", ov).onclick = closeModal;
+  const copy = $('[data-do="copy"]', ov);
+  if (copy) copy.onclick = async () => { closeModal(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
+  $('[data-do="me"]', ov).onclick = () => { closeModal(); deleteMessages(m, false); };
+  const all = $('[data-do="all"]', ov);
+  if (all) all.onclick = async () => {
+    closeModal();
+    const ok = await confirmDialog({ title: tx("مسح الرسالة عند الكل؟"), body: tx("الرسالة هتتمسح عندك وعند {name}، وهيظهر مكانها إنها اتمسحت.", { name: profile(m.recipient_id)?.full_name || "" }), ok: "مسح عند الكل" });
+    if (ok) deleteMessages(m, true);
+  };
+}
+
+async function deleteMessages(m, forEveryone) {
+  const { data, error } = await sb.rpc("delete_messages", { p_ids: [m.id], p_for_everyone: forEveryone });
+  if (error) return toast(friendly(error), true);
+  if (!data) return toast(tx("مقدرتش أمسح الرسالة"), true);
+  if (forEveryone) { m.body = ""; m.deleted_at = new Date().toISOString(); }
+  else if (m.sender_id === state.me.id) m.deleted_for_sender = true; else m.deleted_for_recipient = true;
+  const pid = partnerOf(m);
+  fillThread(pid); fillConvs(pid); renderChatBadges();
+  toast(tx(forEveryone ? "اتمسحت عند الكل" : "اتمسحت عندك"));
 }
 
 async function sendMessage(pid, ta, bodyOverride) {

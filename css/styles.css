@@ -1122,3 +1122,20 @@ html[data-splash="skip"] #splash { display: none; }
 }
 @media (min-width: 961px) { body.chat-thread .chat-thread-pane { display: flex; } }
 .bubble .txt { display: block; }
+
+/* chat: message actions & deleted messages */
+.bubble-row { display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.msg.mine .bubble-row { flex-direction: row-reverse; }
+.msg-act { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 0; background: transparent; color: var(--ink-3); display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+.msg-act .i { width: 16px; height: 16px; }
+.msg:hover .msg-act, .msg-act:focus-visible { opacity: 1; }
+.msg-act:hover { background: var(--card); color: var(--ink); }
+@media (hover: none) { .msg-act { display: none; } .bubble { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } }
+.bubble .txt.gone { display: inline-flex; align-items: center; gap: 6px; font-style: italic; opacity: .8; }
+.bubble .txt.gone .i { width: 14px; height: 14px; }
+.msg.deleted .bubble { background: transparent !important; color: var(--ink-3) !important; border: 1px dashed var(--line) !important; box-shadow: none; }
+.msg-preview { background: var(--bg); border: 1px solid var(--line-2); border-radius: 14px; padding: 10px 14px; margin-bottom: 12px; color: var(--ink-2); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.msg-preview.gone { font-style: italic; color: var(--ink-3); }
+.thread-clear { margin-inline-start: auto; color: var(--ink-3); }
+.thread-clear:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.bubble-row .bubble { min-width: 0; }

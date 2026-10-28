@@ -331,3 +331,5 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- ======================== v6: direct messages (chat) ========================
 -- See migration "v6_direct_messages": table public.messages (sender_id, recipient_id, body ≤ 4000, read_at),
 -- RLS: read own conversations, send as yourself to active profiles, recipient may only set read_at (trigger-guarded), realtime enabled.
+-- v7 (migration "v7_message_delete"): messages.deleted_for_sender / deleted_for_recipient / deleted_at,
+-- RPCs delete_messages(ids, for_everyone) and clear_conversation(partner); guard trigger blocks direct edits.
