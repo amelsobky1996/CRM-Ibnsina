@@ -327,3 +327,7 @@ begin
 end $$;
 drop trigger if exists projects_lock_created_by on public.projects;
 create trigger projects_lock_created_by before update on public.projects for each row execute function public.projects_lock_created_by();
+
+-- ======================== v6: direct messages (chat) ========================
+-- See migration "v6_direct_messages": table public.messages (sender_id, recipient_id, body ≤ 4000, read_at),
+-- RLS: read own conversations, send as yourself to active profiles, recipient may only set read_at (trigger-guarded), realtime enabled.

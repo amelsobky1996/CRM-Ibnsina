@@ -42,7 +42,7 @@ const EN = {
   // ---------- navigation / shell
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
-  "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More", "مش مسموح لك تحذف المشروع ده": "You're not allowed to delete this project",
+  "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More", "المحادثات": "Chats", "كلّم أي حد في الفريق مباشرة.": "Message anyone on the team directly.", "اختار حد تكلمه": "Pick someone to chat with", "الرسايل نصية بس، ومحدش يقدر يشوفها غيركم انتم الاتنين.": "Text messages only, visible just to the two of you.", "باقي الفريق": "Rest of the team", "ابدأ محادثة": "Start a chat", "مفيش نتايج": "No results", "رجوع": "Back", "اكتب رسالة…": "Type a message…", "ابدأ المحادثة برسالة.": "Say hello to start the conversation.", "امبارح": "Yesterday", "انت: ": "You: ", "اتقرت": "Read", "اتبعتت": "Sent", "مااتبعتتش — اضغط تعيد": "Not sent — tap to retry", "الرسالة طويلة أوي": "Message is too long", "رسالة من {name}: {text}": "Message from {name}: {text}", "مش مسموح لك تحذف المشروع ده": "You're not allowed to delete this project",
   "اتغيرت الصورة": "Photo updated",
 
   // ---------- tasks list

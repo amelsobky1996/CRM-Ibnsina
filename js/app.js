@@ -158,6 +158,9 @@ const state = {
   view: { tab: "mine", status: "all", q: "", user: null, project: "" },
   teamDirectOnly: false,
   notifs: [],
+  msgs: [],
+  chatDrafts: {},
+  chatQ: "",
   scores: {},
   homePeriod: 30,
   reportWeek: 0,
@@ -273,8 +276,8 @@ const friendly = (e) => {
 /* =====================================================================
    Boot / Auth
    ===================================================================== */
-// Splash: ~4s of animation then ~4s holding the final frame (8s from page load (or until the app is ready, whichever is later)
-const SPLASH_MS = reduceMotion ? 2500 : 8000;
+// Splash: ~4s of animation then ~2s holding the final frame (6s from page load (or until the app is ready, whichever is later)
+const SPLASH_MS = reduceMotion ? 2500 : 6000;
 let splashReady = false;
 function dismissSplash() {
   const el = document.getElementById("splash");
@@ -303,7 +306,7 @@ async function boot(userId) {
     if (!state.me) throw new Error("لا يوجد ملف موظف مرتبط بهذا الحساب");
     if (!state.me.active) { await sb.auth.signOut(); return renderLogin("الحساب ده موقوف. كلّم مديرك."); }
     syncPrefsFromProfile();
-    await Promise.all([loadTasks(), loadProjects(), loadNotifs()]);
+    await Promise.all([loadTasks(), loadProjects(), loadNotifs(), loadMessages()]);
     renderShell();
     subscribe();
   } catch (e) {
@@ -335,6 +338,8 @@ function subscribe() {
     if (n) { const tmp = document.createElement("div"); tmp.innerHTML = notifText(n); toast(tmp.textContent); }
   });
   channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async () => { await loadNotifs(); renderBell(); });
+  for (const col of ["recipient_id", "sender_id"])
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `${col}=eq.${state.me.id}` }, (pl) => onMessageRealtime(pl.eventType, pl.new));
   channel.subscribe();
 }
 
@@ -429,21 +434,22 @@ function renderNav() {
   if (!$("#nav")) return;
   const r = currentRoute();
   const myOpen = state.tasks.filter((t) => t.assignees.includes(state.me.id) && t.status !== "done").length;
-  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["projects", "المشاريع", "projects"]];
+  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["chat", "المحادثات", "chat", "chat"], ["projects", "المشاريع", "projects"]];
   if (isManager()) items.push(["reports", "التقارير", "report"]);
   if (isManager()) items.push(["team", "أداء الفريق", "team"]);
   items.push(["org", "الهيكل التنظيمي", "org"]);
   if (isManager()) items.push(["users", "الموظفين", "users"]);
   items.push(["settings", "الإعدادات", "settings"]);
   $("#nav").innerHTML = items.map(([k, label, ic, n]) =>
-    `<a href="#/${k}" class="${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${n ? `<span class="count">${n}</span>` : ""}</a>`).join("");
+    `<a href="#/${k}" class="${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${n === "chat" ? `<span class="count chat-count" data-chat-badge hidden></span>` : n ? `<span class="count">${n}</span>` : ""}</a>`).join("");
   // Mobile app tab bar: first four destinations + "More" sheet for the rest
   const primary = items.slice(0, 4), rest = items.slice(4);
   const inMore = rest.some(([k]) => k === r.page);
   $("#tabbar").innerHTML = primary.map(([k, label, ic, n]) =>
-    `<a href="#/${k}" class="tb ${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}><span class="tb-ic">${icon(ic)}${n ? `<span class="tb-badge">${n > 9 ? "9+" : n}</span>` : ""}</span><span class="tb-lbl">${label}</span></a>`).join("") +
+    `<a href="#/${k}" class="tb ${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}><span class="tb-ic">${icon(ic)}${n === "chat" ? `<span class="tb-badge" data-chat-badge hidden></span>` : n ? `<span class="tb-badge">${n > 9 ? "9+" : n}</span>` : ""}</span><span class="tb-lbl">${label}</span></a>`).join("") +
     `<button class="tb ${inMore ? "on" : ""}" id="tb-more" aria-haspopup="dialog"><span class="tb-ic">${icon("grid")}</span><span class="tb-lbl">المزيد</span></button>`;
   $("#tb-more").onclick = () => openMoreSheet(rest);
+  renderChatBadges();
   const me = state.me;
   $("#side-me").innerHTML = `
     <button class="avatar-btn" id="me-photo" title="تغيير صورتي" aria-label="تغيير صورتي">${avatar(me)}</button>
@@ -494,7 +500,9 @@ function route() {
   const { page, params } = currentRoute();
   renderNav();
   const view = $("#view");
+  if (page !== "chat") document.body.classList.remove("chat-thread");
   if (page === "settings") renderSettings();
+  else if (page === "chat") renderChat();
   else if (page === "home") renderHome();
   else if (page === "reports" && isManager()) renderReports();
   else if (page === "projects") renderProjects();
@@ -1935,6 +1943,209 @@ document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#person
 /* =====================================================================
    Settings (language + theme, saved on this device)
    ===================================================================== */
+/* =====================================================================
+   Chat (1:1 direct messages, text only)
+   ===================================================================== */
+const MSG_MAX = 4000;
+async function loadMessages() {
+  const { data, error } = await sb.from("messages").select("*").order("created_at", { ascending: false }).limit(3000);
+  if (!error) state.msgs = (data || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+const partnerOf = (m) => (m.sender_id === state.me.id ? m.recipient_id : m.sender_id);
+const chatUnread = (pid) => state.msgs.filter((m) => m.recipient_id === state.me.id && !m.read_at && (!pid || m.sender_id === pid)).length;
+
+function conversations() {
+  const last = new Map();
+  for (const m of state.msgs) last.set(partnerOf(m), m);
+  return [...last.entries()].map(([pid, m]) => ({ pid, last: m })).sort((a, b) => new Date(b.last.created_at) - new Date(a.last.created_at));
+}
+
+const fmtClock = (d) => new Date(d).toLocaleTimeString(LOCALE(), { hour: "numeric", minute: "2-digit" });
+function fmtDay(d) {
+  const x = new Date(d), today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(x); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return tx("النهارده");
+  if (diff === 1) return tx("امبارح");
+  return x.toLocaleDateString(LOCALE(), { weekday: "long", day: "numeric", month: "long" });
+}
+function fmtListTime(d) {
+  const x = new Date(d), diff = (Date.now() - x) / 86400000;
+  if (new Date().toDateString() === x.toDateString()) return fmtClock(d);
+  if (diff < 6) return x.toLocaleDateString(LOCALE(), { weekday: "short" });
+  return x.toLocaleDateString(LOCALE(), { day: "numeric", month: "short" });
+}
+// escape, keep line breaks, linkify http(s) URLs
+const msgHtml = (s) => esc(s).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`).replace(/\n/g, "<br>");
+
+function renderChat() {
+  const { params } = currentRoute();
+  const withId = params.get("with");
+  const partner = withId && profile(withId);
+  if (withId && (!partner || withId === state.me.id)) { location.replace("#/chat"); return; }
+  document.body.classList.toggle("chat-thread", !!partner);
+  $("#view").innerHTML = `
+    <div class="page-head chat-head-page"><div><h1>المحادثات</h1><p>كلّم أي حد في الفريق مباشرة.</p></div></div>
+    <div class="chat ${partner ? "has-thread" : ""}">
+      <aside class="chat-list">
+        <div class="input-icon chat-search">${icon("search", "sm")}<input class="input" type="search" id="chat-q" placeholder="ابحث باسم الموظف" value="${esc(state.chatQ || "")}"></div>
+        <div class="chat-convs" id="chat-convs"></div>
+      </aside>
+      <section class="chat-thread-pane" id="chat-pane">${partner ? "" : `<div class="chat-empty"><div class="ill">${icon("chat")}</div><b>اختار حد تكلمه</b><span>الرسايل نصية بس، ومحدش يقدر يشوفها غيركم انتم الاتنين.</span></div>`}</section>
+    </div>`;
+  fillConvs(withId);
+  $("#chat-q").oninput = (e) => { state.chatQ = e.target.value; fillConvs(withId); };
+  if (partner) renderThread(partner);
+}
+
+function fillConvs(activeId) {
+  const box = $("#chat-convs"); if (!box) return;
+  const q = (state.chatQ || "").trim().toLowerCase();
+  const match = (p) => !q || p.full_name.toLowerCase().includes(q) || (p.job_title || "").toLowerCase().includes(q) || (p.username || "").toLowerCase().includes(q);
+  const convs = conversations().filter((c) => profile(c.pid) && match(profile(c.pid)));
+  const talked = new Set(convs.map((c) => c.pid));
+  const others = state.profiles.filter((p) => p.active && p.id !== state.me.id && !talked.has(p.id) && match(p))
+    .sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+  const row = (p, last) => {
+    const n = chatUnread(p.id);
+    const preview = last ? (last.sender_id === state.me.id ? tx("انت: ") : "") + last.body.replace(/\s+/g, " ") : (p.job_title || "");
+    return `<a class="conv ${p.id === activeId ? "on" : ""} ${n ? "unread" : ""}" href="#/chat?with=${p.id}">
+      ${avatar(p)}
+      <span class="conv-main"><span class="conv-top"><b><bdi>${esc(p.full_name)}</bdi></b>${last ? `<time>${fmtListTime(last.created_at)}</time>` : ""}</span>
+        <span class="conv-sub"><span class="conv-prev"><bdi>${esc(preview)}</bdi></span>${n ? `<span class="conv-badge">${n > 99 ? "99+" : n}</span>` : ""}</span></span>
+    </a>`;
+  };
+  box.innerHTML =
+    (convs.length ? convs.map((c) => row(profile(c.pid), c.last)).join("") : "") +
+    (others.length ? `<div class="conv-sep">${convs.length ? "باقي الفريق" : "ابدأ محادثة"}</div>` + others.map((p) => row(p, null)).join("") : "") +
+    (!convs.length && !others.length ? `<p class="muted" style="padding:16px;text-align:center">مفيش نتايج</p>` : "");
+}
+
+function renderThread(p) {
+  const pane = $("#chat-pane");
+  const draft = (state.chatDrafts ||= {})[p.id] || "";
+  pane.innerHTML = `
+    <header class="thread-head">
+      <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
+      ${avatar(p)}
+      <div class="thread-who"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
+    </header>
+    <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <textarea class="input" id="msg-in" rows="1" maxlength="${MSG_MAX}" placeholder="اكتب رسالة…" aria-label="اكتب رسالة">${esc(draft)}</textarea>
+      <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
+    </form>`;
+  fillThread(p.id, true);
+  const ta = $("#msg-in"), btn = $(".send-btn", pane);
+  const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
+  grow();
+  ta.oninput = () => { state.chatDrafts[p.id] = ta.value; btn.disabled = !ta.value.trim(); grow(); };
+  ta.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); $("#composer").requestSubmit(); }
+  };
+  $("#composer").onsubmit = (e) => { e.preventDefault(); sendMessage(p.id, ta); };
+  if (matchMedia("(hover: hover)").matches) ta.focus();
+  markThreadRead(p.id);
+}
+
+function fillThread(pid, jump = false) {
+  const box = $("#thread-msgs"); if (!box) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const msgs = state.msgs.filter((m) => partnerOf(m) === pid);
+  if (!msgs.length) {
+    box.innerHTML = `<div class="thread-empty">${avatar(profile(pid), "lg")}<b>${esc(profile(pid)?.full_name || "")}</b><span>ابدأ المحادثة برسالة.</span></div>`;
+    return;
+  }
+  let html = "", lastDay = "", prev = null;
+  for (const m of msgs) {
+    const day = new Date(m.created_at).toDateString();
+    if (day !== lastDay) { html += `<div class="day-sep"><span>${fmtDay(m.created_at)}</span></div>`; lastDay = day; prev = null; }
+    const mine = m.sender_id === state.me.id;
+    const grouped = prev && prev.sender_id === m.sender_id && (new Date(m.created_at) - new Date(prev.created_at)) < 5 * 60000;
+    const status = mine ? (m._pending ? `<span class="tick">${icon("clock", "sm")}</span>` : m._failed ? `<span class="tick bad">${icon("alert", "sm")}</span>` : `<span class="tick ${m.read_at ? "read" : ""}" title="${m.read_at ? tx("اتقرت") : tx("اتبعتت")}">${icon("check", "sm")}${m.read_at ? icon("check", "sm") : ""}</span>`) : "";
+    html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""}" data-mid="${m.id}">
+      <div class="bubble"><span class="txt" dir="auto">${msgHtml(m.body)}</span><span class="meta"><time>${fmtClock(m.created_at)}</time>${status}</span></div>
+      ${m._failed ? `<button class="retry" data-retry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
+    </div>`;
+    prev = m;
+  }
+    box.innerHTML = html;
+  if (jump || nearBottom) box.scrollTop = box.scrollHeight;
+  $$("[data-retry]", box).forEach((b) => b.onclick = () => {
+    const m = state.msgs.find((x) => x.id === b.dataset.retry);
+    if (!m) return;
+    state.msgs = state.msgs.filter((x) => x !== m);
+    sendMessage(m.recipient_id, null, m.body);
+  });
+}
+
+async function sendMessage(pid, ta, bodyOverride) {
+  const body = (bodyOverride ?? ta.value).trim();
+  if (!body) return;
+  if (body.length > MSG_MAX) return toast(tx("الرسالة طويلة أوي"), true);
+  const temp = { id: "tmp-" + Math.random().toString(36).slice(2), sender_id: state.me.id, recipient_id: pid, body, created_at: new Date().toISOString(), read_at: null, _pending: true };
+  state.msgs.push(temp);
+  if (ta) { ta.value = ""; state.chatDrafts[pid] = ""; ta.style.height = "auto"; ta.focus(); $(".send-btn")?.setAttribute("disabled", ""); }
+  fillThread(pid, true); fillConvs(pid);
+  const { data, error } = await sb.from("messages").insert({ sender_id: state.me.id, recipient_id: pid, body }).select().single();
+  if (error || !data) { temp._pending = false; temp._failed = true; toast(friendly(error || new Error("send failed")), true); }
+  else {
+    const i = state.msgs.indexOf(temp);
+    if (state.msgs.some((m) => m.id === data.id)) state.msgs.splice(i, 1); // realtime got there first
+    else state.msgs[i] = data;
+  }
+  if (currentRoute().page === "chat") { fillThread(pid); fillConvs(currentRoute().params.get("with")); }
+}
+
+let readBusy = false;
+async function markThreadRead(pid) {
+  if (readBusy || document.hidden) return;
+  const ids = state.msgs.filter((m) => m.sender_id === pid && m.recipient_id === state.me.id && !m.read_at).map((m) => m.id);
+  if (!ids.length) return;
+  readBusy = true;
+  const now = new Date().toISOString();
+  state.msgs.forEach((m) => { if (ids.includes(m.id)) m.read_at = now; });
+  renderChatBadges(); fillConvs(pid);
+  await sb.from("messages").update({ read_at: now }).in("id", ids);
+  readBusy = false;
+}
+
+function renderChatBadges() {
+  const n = chatUnread();
+  $$("[data-chat-badge]").forEach((el) => { el.textContent = n > 99 ? "99+" : n; el.hidden = !n; });
+}
+
+function onMessageRealtime(evt, m) {
+  if (!m || !state.me) return;
+  const i = state.msgs.findIndex((x) => x.id === m.id);
+  if (evt === "INSERT") {
+    if (i >= 0) return;
+    if (m.sender_id === state.me.id) {
+      // our own message from another device (or a race with our own insert)
+      const pending = state.msgs.find((x) => x._pending && x.body === m.body && x.recipient_id === m.recipient_id);
+      if (pending) return; // sendMessage will reconcile
+    }
+    state.msgs.push(m);
+  } else if (evt === "UPDATE") {
+    if (i >= 0) state.msgs[i] = { ...state.msgs[i], ...m };
+  }
+  const r = currentRoute();
+  const openWith = r.page === "chat" ? r.params.get("with") : null;
+  const pid = partnerOf(m);
+  if (openWith === pid) { fillThread(pid); if (evt === "INSERT" && m.recipient_id === state.me.id) markThreadRead(pid); }
+  if (r.page === "chat") fillConvs(openWith);
+  renderChatBadges();
+  if (evt === "INSERT" && m.recipient_id === state.me.id && openWith !== pid) {
+    const who = profile(m.sender_id)?.full_name || tx("حد من الفريق");
+    toast(tx("رسالة من {name}: {text}", { name: who, text: m.body.length > 60 ? m.body.slice(0, 60) + "…" : m.body }));
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !state.me) return;
+  const r = currentRoute();
+  if (r.page === "chat" && r.params.get("with")) markThreadRead(r.params.get("with"));
+});
+
 function renderSettings() {
   const themes = [
     ["light", "فاتح", ""],
