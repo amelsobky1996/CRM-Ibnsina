@@ -671,7 +671,7 @@ function renderTasks() {
         <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
           <span class="pill s-${t.status}">${STATUS[t.status]}</span>
           <span class="t-title"><b>${esc(t.title)}</b>
-            <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
+            <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span ${t.created_by ? `data-pid="${esc(t.created_by)}"` : ""}>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
           ${avatarsCell(t.assignees)}
           ${deadlineCell(t)}
           ${progressCell(t)}
@@ -1845,10 +1845,10 @@ async function exportReportXlsx(R, range) {
    Person hover card (hover a photo ~2s)
    ===================================================================== */
 const HOVER_DELAY = 2000;
-let pcTimer = null, pcHideTimer = null, pcFor = null;
+let pcTimer = null, pcHideTimer = null, pcFor = null, pcPending = null;
 
 function hidePersonCard(now = false) {
-  clearTimeout(pcTimer); pcTimer = null;
+  clearTimeout(pcTimer); pcTimer = null; pcPending = null;
   const card = $("#person-card");
   if (!card) { pcFor = null; return; }
   const go = () => { card.remove(); pcFor = null; };
@@ -1866,8 +1866,19 @@ function bigPhoto(p) {
   return `<span class="pc-img pc-ini" role="img" aria-label="${esc(p.full_name)}" style="--bg:${AV_COLORS[h % AV_COLORS.length]}">${esc(initials)}</span>`;
 }
 
-function showPersonCard(el) {
-  const p = profile(el.dataset.pid);
+// Hovering anywhere on a "person" (photo, name, row/card) opens the card
+const PERSON_ZONES = ".lb-row, .org-card, .conv, .sheet-me, tbody tr:has(.person), .person";
+function personTarget(t) {
+  if (!t?.closest) return null;
+  let z = null;
+  try { z = t.closest(PERSON_ZONES); } catch { z = t.closest(".lb-row, .org-card, .conv, .sheet-me, .person"); }
+  z ||= t.closest("[data-pid]");
+  if (!z || z.closest("#person-card")) return null;
+  const pid = z.dataset.pid || z.querySelector("[data-pid]")?.dataset.pid;
+  return pid ? { el: z, pid } : null;
+}
+function showPersonCard(el, pid = el.dataset.pid) {
+  const p = profile(pid);
   if (!p || !el.isConnected) return;
   hidePersonCard(true);
   pcFor = el;
@@ -1928,16 +1939,21 @@ function showPersonCard(el) {
 
 document.addEventListener("pointerover", (e) => {
   if (e.pointerType === "touch") return;
-  const el = e.target.closest?.(".av[data-pid]");
-  if (!el || el.closest("#person-card")) return;
+  const hit = personTarget(e.target);
+  if (!hit) return;
+  const el = hit.el;
   if (pcFor === el) { clearTimeout(pcHideTimer); return; }
+  if (pcPending === el) return; // still inside the same person, keep the timer running
   clearTimeout(pcTimer);
-  pcTimer = setTimeout(() => showPersonCard(el), HOVER_DELAY);
+  pcPending = el;
+  pcTimer = setTimeout(() => { pcPending = null; showPersonCard(el, hit.pid); }, HOVER_DELAY);
 });
 document.addEventListener("pointerout", (e) => {
-  const el = e.target.closest?.(".av[data-pid]");
-  if (!el || el.closest("#person-card")) return;
+  const hit = personTarget(e.target);
+  if (!hit) return;
+  const el = hit.el;
   if (el.contains(e.relatedTarget)) return;
+  if (pcPending === el) pcPending = null;
   clearTimeout(pcTimer);
   if (pcFor === el) { clearTimeout(pcHideTimer); pcHideTimer = setTimeout(() => hidePersonCard(), 250); }
 });
@@ -2037,7 +2053,7 @@ function renderThread(p) {
     <header class="thread-head">
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${avatar(p)}
-      <div class="thread-who"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
+      <div class="thread-who" data-pid="${p.id}"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
       <button class="icon-btn thread-clear" id="thread-clear" title="مسح المحادثة عندي" aria-label="مسح المحادثة عندي">${icon("trash")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
