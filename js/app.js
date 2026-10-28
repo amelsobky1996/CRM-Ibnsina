@@ -1900,7 +1900,10 @@ function showPersonCard(el) {
         ${team ? `<div class="pc-row"><span class="pc-k">عدد الفريق</span><span class="pc-v"><b>${team}</b></span></div>` : ""}
         ${canWork ? `<div class="pc-row"><span class="pc-k">مهام مفتوحة</span><span class="pc-v"><b>${open}</b>${late ? `<span class="pc-late">${icon("flame", "sm")}${tx("{n} متأخرة", { n: late })}</span>` : ""}</span></div>` : ""}
       </div>
-      ${canWork ? `<a class="btn sm pc-link" href="#/tasks?user=${p.id}">${icon("tasks", "sm")}<span>عرض المهام</span></a>` : ""}
+      ${(p.id !== me && p.active) || canWork ? `<div class="pc-actions">
+        ${p.id !== me && p.active ? `<a class="btn sm primary pc-link" href="#/chat?with=${p.id}">${icon("chat", "sm")}<span>مراسلة</span></a>` : ""}
+        ${canWork ? `<a class="btn sm pc-link" href="#/tasks?user=${p.id}">${icon("tasks", "sm")}<span>عرض المهام</span></a>` : ""}
+      </div>` : ""}
     </div>`;
   document.body.append(card);
 
@@ -1917,7 +1920,7 @@ function showPersonCard(el) {
 
   card.addEventListener("pointerenter", () => clearTimeout(pcHideTimer));
   card.addEventListener("pointerleave", () => { pcHideTimer = setTimeout(() => hidePersonCard(), 200); });
-  $(".pc-link", card)?.addEventListener("click", () => { hidePersonCard(true); closeModal(); });
+  $$(".pc-link", card).forEach((l) => l.addEventListener("click", () => { hidePersonCard(true); closeModal(); }));
 }
 
 document.addEventListener("pointerover", (e) => {
