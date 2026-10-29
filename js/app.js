@@ -2384,7 +2384,10 @@ async function renderAttendance() {
     <div class="page-head">
       <div><h1>الحضور والنقاط</h1>
         <p>${tx("الدورة الحالية {range}", { range: cycleLabel(curCycle()) })} · ${tx("الاستاند أب: {days}", { days: A.days.length ? A.days.slice().sort().map((d) => dayName(d)).join(LANG === "en" ? ", " : "، ") : tx("مفيش أيام متحددة") })}</p></div>
-      <div class="pts-head-me ${ptsTone(s.total)}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${s.total}</b></div>
+      <div class="att-head-actions">
+        ${canExportAtt() ? `<button class="btn ghost" id="att-export">${icon("download")}${tx("تصدير PDF")}</button>` : ""}
+        <div class="pts-head-me ${ptsTone(s.total)}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${s.total}</b></div>
+      </div>
     </div>
     <div class="rules">
       <span class="rule base"><b>${PTS_BASE}</b>رصيد البداية كل دورة (من يوم 16 لـ يوم 15)</span>
@@ -2395,6 +2398,7 @@ async function renderAttendance() {
     <div class="tabs" role="tablist"><span class="pill-bg"></span>${tabs.map(([k, l]) => `<button class="tab ${A.tab === k ? "on" : ""}" data-atab="${k}" role="tab" aria-selected="${A.tab === k}">${l}</button>`).join("")}</div>
     <div id="att-body"></div>`;
   $$("[data-atab]").forEach((b) => b.onclick = () => { A.tab = b.dataset.atab; state.animate = false; renderAttendance(); });
+  const ax = $("#att-export"); if (ax) ax.onclick = openAttExport;
   placeTabPill(view);
   ({ take: attTake, me: attMine, board: attBoard, log: attLog, admin: attAdmin })[A.tab]();
 }
@@ -2605,6 +2609,159 @@ function attAdmin() {
 }
 function renderNavPts() { /* points live in the page header & home; nothing in the nav */ }
 
+
+/* ---------- attendance & points PDF export ---------- */
+const canExportAtt = () => isTaker() || isManager();
+
+// every points event per person (absence -3, every 3rd absence in a cycle -10, thanks +n), dated
+function pointsEvents() {
+  const A = state.att, ev = new Map();
+  const push = (uid, e) => { if (!ev.has(uid)) ev.set(uid, []); ev.get(uid).push(e); };
+  const abs = new Map();
+  A.rows.filter((r) => r.status === "absent").sort((a, b) => a.day.localeCompare(b.day)).forEach((r) => {
+    const k = r.user_id + "|" + cycleStartOf(r.day);
+    const n = (abs.get(k) || 0) + 1; abs.set(k, n);
+    push(r.user_id, { day: r.day, kind: "abs", pts: PTS.absent });
+    if (n % 3 === 0) push(r.user_id, { day: r.day, kind: "rep", pts: PTS.every3, n });
+  });
+  A.awards.forEach((a) => push(a.user_id, { day: awardDay(a), kind: "thx", pts: a.points, reason: a.reason, by: a.given_by }));
+  return ev;
+}
+
+function buildAttReport({ from, to, cycle, userId }) {
+  const A = state.att, ev = pointsEvents();
+  const inR = (d) => d >= from && d <= to;
+  const sessions = A.sessions.filter((s) => inR(s.day)).sort((a, b) => a.day.localeCompare(b.day));
+  const rowsR = A.rows.filter((r) => inR(r.day));
+  let people = state.profiles.filter((p) => p.active || rowsR.some((r) => r.user_id === p.id));
+  if (userId) people = people.filter((p) => p.id === userId);
+  const list = people.map((p) => {
+    const mine = rowsR.filter((r) => r.user_id === p.id);
+    const present = mine.filter((r) => r.status === "present").length;
+    const absent = mine.length - present;
+    const es = (ev.get(p.id) || []).filter((e) => inR(e.day));
+    const absDed = es.filter((e) => e.kind === "abs").reduce((s, e) => s + e.pts, 0);
+    const repDed = es.filter((e) => e.kind === "rep").reduce((s, e) => s + e.pts, 0);
+    const thanks = es.filter((e) => e.kind === "thx").reduce((s, e) => s + e.pts, 0);
+    const net = absDed + repDed + thanks;
+    return { p, present, absent, rate: mine.length ? Math.round(present / mine.length * 100) : null, absDed, repDed, thanks, net, balance: cycle ? PTS_BASE + net : null, events: es.sort((a, b) => a.day.localeCompare(b.day)) };
+  }).sort((a, b) => (cycle ? b.balance - a.balance : b.net - a.net) || a.absent - b.absent || a.p.full_name.localeCompare(b.p.full_name, "ar"));
+  const totP = list.reduce((s, x) => s + x.present, 0), totA = list.reduce((s, x) => s + x.absent, 0);
+  return { from, to, cycle, userId, sessions, rowsR, list, totP, totA, rate: totP + totA ? Math.round(totP / (totP + totA) * 100) : null };
+}
+
+function attReportHtml(R) {
+  const one = R.userId && R.list[0];
+  const period = R.cycle ? tx("دورة {range}", { range: cycleLabel(R.cycle) }) : tx("من {a} لـ {b}", { a: fmtDayLong(R.from), b: fmtDayLong(R.to) });
+  const n = (v) => `<bdi dir="ltr">${v > 0 ? "+" + v : v}</bdi>`;
+  const byDay = new Map();
+  R.rowsR.forEach((r) => { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); });
+  return `
+    <div class="pd-head">
+      <img src="assets/logo-white.png" alt="">
+      <div><b>${tx("تقرير الحضور والنقاط")}${one ? " — " + esc(one.p.full_name) : ""}</b><span>${period}</span></div>
+      <small>${tx("اتطبع {date}", { date: new Date().toLocaleString(LOCALE(), { dateStyle: "medium", timeStyle: "short" }) })}</small>
+    </div>
+    <p class="pd-rules">${tx("القواعد: الرصيد بيبدأ {base} نقطة كل دورة (من يوم 16 لـ يوم 15) · الغياب {a} · مع كل 3 غيابات في نفس الدورة {r} إضافية · نقاط الشكر بتتضاف.", { base: PTS_BASE, a: PTS.absent, r: PTS.every3 })}</p>
+    <div class="pd-stats">
+      <div><b>${R.sessions.length}</b><span>${tx("استاند أب متسجل")}</span></div>
+      <div><b>${R.totP}</b><span>${tx("مرات حضور")}</span></div>
+      <div><b>${R.totA}</b><span>${tx("مرات غياب")}</span></div>
+      <div><b>${R.rate === null ? "—" : R.rate + "%"}</b><span>${tx("نسبة الحضور")}</span></div>
+    </div>
+    <h3>${one ? tx("الملخص") : tx("نقاط الموظفين")}</h3>
+    <table class="pd-t">
+      <thead><tr><th>#</th><th>${tx("الموظف")}</th><th>${tx("حضور")}</th><th>${tx("غياب")}</th><th>${tx("نسبة الحضور")}</th><th>${tx("خصم الغياب")}</th><th>${tx("خصم التكرار")}</th><th>${tx("نقاط شكر")}</th><th>${R.cycle ? tx("الرصيد") : tx("صافي التغيير")}</th></tr></thead>
+      <tbody>${R.list.map((x, i) => `<tr>
+        <td>${i + 1}</td>
+        <td><b>${esc(x.p.full_name)}</b><small>${esc(x.p.job_title || "")}</small></td>
+        <td>${x.present}</td><td>${x.absent}</td><td>${x.rate === null ? "—" : x.rate + "%"}</td>
+        <td class="neg">${x.absDed ? n(x.absDed) : "0"}</td><td class="neg">${x.repDed ? n(x.repDed) : "0"}</td><td class="pos">${x.thanks ? n(x.thanks) : "0"}</td>
+        <td class="tot ${R.cycle ? (x.balance < PTS_BASE ? "neg" : x.balance > PTS_BASE ? "pos" : "") : x.net < 0 ? "neg" : x.net > 0 ? "pos" : ""}">${R.cycle ? x.balance : n(x.net)}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+    ${one ? `
+      <h3>${tx("تفاصيل النقاط")}</h3>
+      ${one.events.length ? `<table class="pd-t"><thead><tr><th>${tx("اليوم")}</th><th>${tx("البند")}</th><th>${tx("النقاط")}</th></tr></thead><tbody>
+        ${one.events.map((e) => `<tr><td>${fmtDayLong(e.day)}</td><td>${e.kind === "abs" ? tx("غياب عن الاستاند أب") : e.kind === "rep" ? tx("خصم تكرار الغياب ({n} غيابات في الدورة)", { n: e.n }) : tx("نقاط شكر") + (e.reason ? " — " + esc(e.reason) : "")}</td><td class="${e.pts < 0 ? "neg" : "pos"}">${n(e.pts)}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="pd-empty">${tx("مفيش خصومات أو نقاط شكر في الفترة دي.")}</p>`}` : ""}
+    <h3>${tx("سجل الاستاند أب")}</h3>
+    ${R.sessions.length ? `<table class="pd-t"><thead><tr><th>${tx("اليوم")}</th><th>${tx("حضور")}</th><th>${tx("غياب")}</th><th>${one ? tx("الحالة") : tx("الغايبين")}</th></tr></thead><tbody>
+      ${R.sessions.map((ss) => {
+        const rows = byDay.get(ss.day) || [];
+        const absP = rows.filter((r) => r.status === "absent").map((r) => profile(r.user_id)).filter(Boolean);
+        const mine = one && rows.find((r) => r.user_id === one.p.id);
+        return `<tr><td>${fmtDayLong(ss.day)}</td><td>${rows.length - absP.length}</td><td>${absP.length}</td>
+          <td>${one ? (mine ? (mine.status === "absent" ? `<span class="neg">${tx("غايب")}</span>` : tx("حاضر")) : "—") : absP.length ? absP.map((p) => esc(p.full_name)).join("، ") : tx("الكل حضر")}</td></tr>`;
+      }).join("")}
+    </tbody></table>` : `<p class="pd-empty">${tx("مفيش استاند أب متسجل في الفترة دي.")}</p>`}`;
+}
+
+function openAttExport() {
+  const A = state.att, cycles = cycleList(), cur = curCycle();
+  const people = state.profiles.filter((p) => p.active).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+  const ov = openModal(`
+    <h2>${icon("download")} ${tx("تصدير الحضور والنقاط PDF")}</h2>
+    <form id="ax-form">
+      <div class="field"><span>${tx("الفترة")}</span>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="mode" value="cycle" checked><span>${tx("دورة نقاط")}</span></label>
+          <label><input type="radio" name="mode" value="range"><span>${tx("فترة مخصصة")}</span></label>
+        </div></div>
+      <label class="field" id="ax-cycle"><span>${tx("الدورة")}</span>
+        <select class="input" name="cycle">${cycles.map((c, i) => `<option value="${c}" ${c === (A.cycle || cur) ? "selected" : ""}>${cycleLabel(c)}${i === 0 ? " · " + tx("الحالية") : ""}</option>`).join("")}</select></label>
+      <div class="row2" id="ax-range" hidden>
+        <label class="field"><span>${tx("من")}</span><input class="input" type="date" name="from" value="${cur}"></label>
+        <label class="field"><span>${tx("لحد")}</span><input class="input" type="date" name="to" value="${cairoToday()}"></label>
+      </div>
+      <label class="field"><span>${tx("الموظفين")}</span>
+        <select class="input" name="user"><option value="">${tx("كل الموظفين")}</option>${people.map((p) => `<option value="${p.id}">${esc(p.full_name)}</option>`).join("")}</select></label>
+      <p class="meta" style="margin:0 0 12px">${tx("هيفتح شاشة الطباعة، اختار منها «Save as PDF» أو «حفظ كـ PDF».")}</p>
+      <p class="err" id="ax-err"></p>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" data-close>إلغاء</button>
+        <button class="btn primary" type="submit">${icon("printer")}${tx("تصدير PDF")}</button>
+      </div>
+    </form>`, { label: tx("تصدير الحضور والنقاط PDF") });
+  $("[data-close]", ov).onclick = closeModal;
+  $$('input[name="mode"]', ov).forEach((r) => r.onchange = () => {
+    const range = $('input[name="mode"]:checked', ov).value === "range";
+    $("#ax-range", ov).hidden = !range; $("#ax-cycle", ov).hidden = range;
+  });
+  $("#ax-form", ov).onsubmit = (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    let from, to, cycle = null;
+    if (f.get("mode") === "cycle") { cycle = String(f.get("cycle")); from = cycle; to = cycleEndOf(cycle); }
+    else {
+      from = String(f.get("from") || ""); to = String(f.get("to") || "");
+      if (!from || !to) { $("#ax-err", ov).textContent = tx("حدد بداية ونهاية الفترة"); return; }
+      if (from > to) [from, to] = [to, from];
+      if (from === cycleStartOf(from) && to === cycleEndOf(from)) cycle = from;
+    }
+    const R = buildAttReport({ from, to, cycle, userId: String(f.get("user") || "") || null });
+    closeModal();
+    printDoc(attReportHtml(R), `${tx("الحضور والنقاط")} ${from} - ${to}`);
+  };
+}
+
+function printDoc(html, title) {
+  $("#print-doc")?.remove();
+  const doc = document.createElement("div");
+  doc.id = "print-doc"; doc.className = "print-doc";
+  doc.dir = document.documentElement.dir;
+  doc.innerHTML = html;
+  document.body.appendChild(doc);
+  document.body.classList.add("print-doc-on");
+  const oldTitle = document.title;
+  document.title = title;
+  const done = () => { document.body.classList.remove("print-doc-on"); doc.remove(); document.title = oldTitle; removeEventListener("afterprint", done); };
+  addEventListener("afterprint", done);
+  // wait for the logo image so it makes it into the PDF
+  const img = $("img", doc);
+  const go = () => setTimeout(() => window.print(), 60);
+  if (img && !img.complete) { img.onload = go; img.onerror = go; } else go();
+}
 
 function renderSettings() {
   const themes = [
