@@ -333,3 +333,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- RLS: read own conversations, send as yourself to active profiles, recipient may only set read_at (trigger-guarded), realtime enabled.
 -- v7 (migration "v7_message_delete"): messages.deleted_for_sender / deleted_for_recipient / deleted_at,
 -- RPCs delete_messages(ids, for_everyone) and clear_conversation(partner); guard trigger blocks direct edits.
+-- v8 (migrations "v8_attendance_points", "v8b_attendance_retract_notifs"): stand-up attendance & points.
+-- Tables: standup_settings, attendance_takers, attendance_sessions, attendance, points_awards.
+-- RPCs: save_attendance(day, rows), points_summary(). Rules: present +3, absent -3, every 3rd absence in a calendar month -10, + admin thank-you points.

@@ -162,6 +162,7 @@ const state = {
   teamDirectOnly: false,
   notifs: [],
   msgs: [],
+  att: { takers: new Set(), days: [], points: new Map(), sessions: [], rows: [], awards: [], loaded: false, tab: null, day: null, draft: null, draftDay: null },
   chatDrafts: {},
   chatQ: "",
   scores: {},
@@ -309,7 +310,7 @@ async function boot(userId) {
     if (!state.me) throw new Error("لا يوجد ملف موظف مرتبط بهذا الحساب");
     if (!state.me.active) { await sb.auth.signOut(); return renderLogin("الحساب ده موقوف. كلّم مديرك."); }
     syncPrefsFromProfile();
-    await Promise.all([loadTasks(), loadProjects(), loadNotifs(), loadMessages()]);
+    await Promise.all([loadTasks(), loadProjects(), loadNotifs(), loadMessages(), loadAttMeta()]);
     renderShell();
     subscribe();
   } catch (e) {
@@ -341,6 +342,16 @@ function subscribe() {
     if (n) { const tmp = document.createElement("div"); tmp.innerHTML = notifText(n); toast(tmp.textContent); }
   });
   channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async () => { await loadNotifs(); renderBell(); });
+  const attReload = () => debounced(async () => {
+    try {
+      await loadAttMeta();
+      if (state.att.loaded) await loadAttData();
+      const pg = currentRoute().page;
+      if ((pg === "home" || (pg === "attendance" && state.att.tab !== "take")) && !$("#modal-root").innerHTML) { state.animate = false; route(); }
+    } catch (e) { console.error(e); }
+  }, 600);
+  for (const table of ["attendance_sessions", "points_awards", "attendance_takers", "standup_settings"])
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, attReload);
   for (const col of ["recipient_id", "sender_id"])
     channel.on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `${col}=eq.${state.me.id}` }, (pl) => onMessageRealtime(pl.eventType, pl.new));
   channel.subscribe();
@@ -437,7 +448,7 @@ function renderNav() {
   if (!$("#nav")) return;
   const r = currentRoute();
   const myOpen = state.tasks.filter((t) => t.assignees.includes(state.me.id) && t.status !== "done").length;
-  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["chat", "المحادثات", "chat", "chat"], ["projects", "المشاريع", "projects"]];
+  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["chat", "المحادثات", "chat", "chat"], ["projects", "المشاريع", "projects"], ["attendance", "الحضور والنقاط", "trophy"]];
   if (isManager()) items.push(["reports", "التقارير", "report"]);
   if (isManager()) items.push(["team", "أداء الفريق", "team"]);
   items.push(["org", "الهيكل التنظيمي", "org"]);
@@ -506,6 +517,7 @@ function route() {
   if (page !== "chat") document.body.classList.remove("chat-thread");
   if (page === "settings") renderSettings();
   else if (page === "chat") renderChat();
+  else if (page === "attendance") renderAttendance();
   else if (page === "home") renderHome();
   else if (page === "reports" && isManager()) renderReports();
   else if (page === "projects") renderProjects();
@@ -1262,6 +1274,8 @@ function notifText(n) {
     case "comment": return tx("{actor} علّق على {title}", { actor, title });
     case "completed": return tx("{actor} خلّص مهمة {title}", { actor, title });
     case "due_soon": return tx("موعد تسليم {title} بكرة", { title });
+    case "absent": return tx("اتسجلت غايب عن استاند أب {day} ({pts} نقاط)", { day: `<b>${esc(n.data?.day ? fmtDayShort(n.data.day) : "")}</b>`, pts: PTS.absent });
+    case "thanks": return tx("{actor} اداك {pts} نقطة شكر", { actor, pts: `<b>+${esc(n.data?.points ?? "")}</b>` }) + (n.data?.reason ? ` — ${esc(n.data.reason)}` : "");
     default: return title;
   }
 }
@@ -1290,7 +1304,7 @@ function toggleNotifPanel(refresh = false) {
     <div class="np-list">${items.length ? items.map((n) => {
       const actor = profile(n.actor_id);
       return `<button class="np-item ${n.read_at ? "" : "unread"}" data-n="${n.id}">
-        <span class="np-ico t-${n.type}">${actor ? avatar(actor, "sm") : icon(n.type === "due_soon" ? "clock" : "bell", "sm")}</span>
+        <span class="np-ico t-${n.type}">${actor ? avatar(actor, "sm") : icon(n.type === "due_soon" ? "clock" : n.type === "absent" ? "calendar" : n.type === "thanks" ? "trophy" : "bell", "sm")}</span>
         <span class="np-body"><span class="np-text">${notifText(n)}</span>
           ${n.type === "comment" && n.data?.excerpt ? `<span class="np-ex">${esc(n.data.excerpt)}</span>` : ""}
           <small>${timeAgo(n.created_at)}</small></span>
@@ -1312,7 +1326,8 @@ function toggleNotifPanel(refresh = false) {
       n.read_at = new Date().toISOString(); renderBell();
       sb.from("notifications").update({ read_at: n.read_at }).eq("id", n.id).then(() => {});
     }
-    if (n?.task_id && state.tasks.some((t) => t.id === n.task_id)) openTask(n.task_id);
+    if (n && (n.type === "absent" || n.type === "thanks")) { state.att.tab = "me"; location.hash = "#/attendance"; if (currentRoute().page === "attendance") route(); }
+    else if (n?.task_id && state.tasks.some((t) => t.id === n.task_id)) openTask(n.task_id);
     else toast("المهمة دي مبقتش موجودة", true);
   });
 }
@@ -1617,6 +1632,7 @@ function renderHome() {
         <div id="lb"><div class="lb-skel">${"<i></i>".repeat(6)}</div></div>
       </section>
       <aside class="side-col">
+        ${homePointsCard()}
         <section class="mini-card">
           <h3>${icon("tasks", "sm")}مهامك الجاية</h3>
           ${nextUp.length ? `<div class="next-list">${nextUp.map((t) => `
@@ -2233,6 +2249,311 @@ document.addEventListener("visibilitychange", () => {
   const r = currentRoute();
   if (r.page === "chat" && r.params.get("with")) markThreadRead(r.params.get("with"));
 });
+
+/* =====================================================================
+   Attendance (stand-up) + points
+   ===================================================================== */
+const PTS = { present: 3, absent: -3, every3: -10 };
+const cairoToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+const dayName = (i, style = "long") => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE(), { weekday: style });
+const fmtDayLong = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const fmtDayShort = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { weekday: "short", day: "numeric", month: "short" });
+const isTaker = () => !!state.me && (state.me.is_admin || state.att.takers.has(state.me.id));
+const signed = (n) => (n > 0 ? "+" : "") + n;
+const signedH = (n) => `<bdi dir="ltr">${signed(n)}</bdi>`;
+
+async function loadAttMeta() {
+  const [tk, st, pts] = await Promise.all([
+    sb.from("attendance_takers").select("user_id"),
+    sb.from("standup_settings").select("weekdays").eq("id", 1).single(),
+    sb.rpc("points_summary"),
+  ]);
+  if (!tk.error) state.att.takers = new Set((tk.data || []).map((r) => r.user_id));
+  if (!st.error && st.data) state.att.days = st.data.weekdays || [];
+  if (!pts.error) state.att.points = new Map((pts.data || []).map((r) => [r.user_id, r]));
+}
+async function loadAttData() {
+  const [ss, at, aw] = await Promise.all([
+    sb.from("attendance_sessions").select("*").order("day", { ascending: false }).limit(1000),
+    sb.from("attendance").select("*").order("day", { ascending: false }).limit(20000),
+    sb.from("points_awards").select("*").order("created_at", { ascending: false }).limit(2000),
+  ]);
+  for (const r of [ss, at, aw]) if (r.error) throw r.error;
+  state.att.sessions = ss.data || [];
+  state.att.rows = at.data || [];
+  state.att.awards = aw.data || [];
+  state.att.loaded = true;
+}
+const myPoints = (id = state.me.id) => state.att.points.get(id) || { total: 0, present: 0, absent: 0, penalty: 0, thanks: 0 };
+
+function pointsBoardHtml(limit = 0) {
+  const people = state.profiles.filter((p) => p.active).map((p) => ({ p, s: myPoints(p.id) }))
+    .sort((a, b) => b.s.total - a.s.total || a.p.full_name.localeCompare(b.p.full_name, "ar"));
+  const list = limit ? people.slice(0, limit) : people;
+  let rank = 0, prev = null;
+  return `<div class="pts-board">${list.map((x, i) => {
+    if (x.s.total !== prev) { rank = i + 1; prev = x.s.total; }
+    return `<div class="pts-row ${x.p.id === state.me.id ? "me" : ""}">
+      <span class="pts-rank r${Math.min(rank, 4)}">${rank}</span>
+      <div class="person">${avatar(x.p, "sm")}<div><b>${esc(x.p.full_name)}</b><small>${esc(x.p.job_title || "")}</small></div></div>
+      <b class="pts-val ${x.s.total < 0 ? "neg" : x.s.total > 0 ? "pos" : ""}">${signedH(x.s.total)}</b>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function homePointsCard() {
+  const s = myPoints();
+  return `
+    <section class="mini-card pts-card">
+      <h3>${icon("trophy", "sm")}نقاطي</h3>
+      <div class="pts-big ${s.total < 0 ? "neg" : s.total > 0 ? "pos" : ""}"><b>${signedH(s.total)}</b><span>نقطة</span></div>
+      <div class="pts-break">
+        <span class="ok">${icon("check", "sm")}${tx("حضور {n}", { n: s.present })}</span>
+        <span class="bad">${icon("close", "sm")}${tx("غياب {n}", { n: s.absent })}</span>
+        ${s.thanks ? `<span class="thx">${icon("trophy", "sm")}${tx("شكر {n}", { n: signedH(s.thanks) })}</span>` : ""}
+      </div>
+      <a class="see-all" href="#/attendance">تفاصيل نقاطي</a>
+    </section>
+    <section class="mini-card">
+      <h3>${icon("team", "sm")}ترتيب النقاط</h3>
+      ${pointsBoardHtml(8)}
+      <a class="see-all" href="#/attendance">الترتيب كامل</a>
+    </section>`;
+}
+
+/* ---------- page ---------- */
+async function renderAttendance() {
+  const view = $("#view");
+  if (!state.att.loaded) {
+    view.innerHTML = `<div class="page-head"><div><h1>الحضور والنقاط</h1></div></div><div class="lb-skel">${"<i></i>".repeat(5)}</div>`;
+    try { await Promise.all([loadAttData(), loadAttMeta()]); }
+    catch (e) { view.innerHTML = `<div class="empty"><b>${esc(friendly(e))}</b></div>`; return; }
+    if (currentRoute().page !== "attendance") return;
+  }
+  const A = state.att, me = state.me, s = myPoints();
+  const taker = isTaker();
+  const tabs = [["me", "نقاطي"], ["board", "الترتيب"], ["log", "سجل الغياب"]];
+  if (taker) tabs.unshift(["take", "تسجيل الغياب"]);
+  if (me.is_admin) tabs.push(["admin", "الإعدادات والشكر"]);
+  if (!tabs.some(([k]) => k === A.tab)) A.tab = taker ? "take" : "me";
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div><h1>الحضور والنقاط</h1>
+        <p>${tx("الاستاند أب: {days}", { days: A.days.length ? A.days.slice().sort().map((d) => dayName(d)).join(LANG === "en" ? ", " : "، ") : tx("مفيش أيام متحددة") })}</p></div>
+      <div class="pts-head-me ${s.total < 0 ? "neg" : s.total > 0 ? "pos" : ""}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${signedH(s.total)}</b></div>
+    </div>
+    <div class="rules">
+      <span class="rule ok"><b>+${PTS.present}</b>حضور الاستاند أب</span>
+      <span class="rule bad"><b>${PTS.absent}</b>غياب</span>
+      <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الشهر</span>
+      <span class="rule thx"><b>+</b>نقاط شكر من الإدارة</span>
+    </div>
+    <div class="tabs" role="tablist"><span class="pill-bg"></span>${tabs.map(([k, l]) => `<button class="tab ${A.tab === k ? "on" : ""}" data-atab="${k}" role="tab" aria-selected="${A.tab === k}">${l}</button>`).join("")}</div>
+    <div id="att-body"></div>`;
+  $$("[data-atab]").forEach((b) => b.onclick = () => { A.tab = b.dataset.atab; state.animate = false; renderAttendance(); });
+  placeTabPill(view);
+  ({ take: attTake, me: attMine, board: attBoard, log: attLog, admin: attAdmin })[A.tab]();
+}
+
+function attMine() {
+  const A = state.att, me = state.me.id, s = myPoints();
+  const rows = A.rows.filter((r) => r.user_id === me);
+  // penalty events: every 3rd absence of a month
+  const byMonth = {};
+  const events = [];
+  rows.slice().sort((a, b) => a.day.localeCompare(b.day)).forEach((r) => {
+    if (r.status === "present") events.push({ when: r.day, pts: PTS.present, label: tx("حضور الاستاند أب"), kind: "ok" });
+    else {
+      const k = r.day.slice(0, 7); byMonth[k] = (byMonth[k] || 0) + 1;
+      events.push({ when: r.day, pts: PTS.absent, label: tx("غياب عن الاستاند أب"), kind: "bad" });
+      if (byMonth[k] % 3 === 0) events.push({ when: r.day, pts: PTS.every3, label: tx("خصم تكرار الغياب ({n} غيابات الشهر ده)", { n: byMonth[k] }), kind: "bad" });
+    }
+  });
+  A.awards.filter((a) => a.user_id === me).forEach((a) => events.push({ when: a.created_at.slice(0, 10), pts: a.points, label: tx("نقاط شكر") + (a.reason ? ` — ${a.reason}` : ""), kind: "thx", by: a.given_by }));
+  events.sort((a, b) => b.when.localeCompare(a.when));
+  const monthKey = cairoToday().slice(0, 7);
+  const monthAbs = rows.filter((r) => r.status === "absent" && r.day.startsWith(monthKey)).length;
+  $("#att-body").innerHTML = `
+    <div class="stats">
+      <div class="stat ${s.total < 0 ? "t-bad" : "t-ok"}"><div class="ico">${icon("trophy")}</div><b>${signedH(s.total)}</b><span>رصيد النقاط</span></div>
+      <div class="stat t-ok"><div class="ico">${icon("check")}</div><b>${s.present}</b><span>مرات الحضور</span></div>
+      <div class="stat t-bad"><div class="ico">${icon("close")}</div><b>${s.absent}</b><span>مرات الغياب</span></div>
+      <div class="stat t-warn"><div class="ico">${icon("alert")}</div><b>${monthAbs}</b><span>${monthAbs % 3 === 2 ? tx("غياب الشهر ده — الجاي عليه −10") : tx("غياب الشهر ده")}</span></div>
+    </div>
+    <section class="card-box">
+      <h3>${icon("history", "sm")}سجل نقاطي</h3>
+      ${events.length ? `<div class="pts-log">${events.map((e) => `
+        <div class="pl-row k-${e.kind}">
+          <span class="pl-dot">${icon(e.kind === "ok" ? "check" : e.kind === "thx" ? "trophy" : "close", "sm")}</span>
+          <div class="pl-main"><b dir="auto">${esc(e.label)}</b><small>${fmtDayLong(e.when)}${e.by && profile(e.by) ? " · " + tx("من {name}", { name: esc(profile(e.by).full_name) }) : ""}</small></div>
+          <b class="pl-pts">${signedH(e.pts)}</b>
+        </div>`).join("")}</div>` : `<p class="meta">لسه مفيش نقاط. أول استاند أب هيتسجل هيظهر هنا.</p>`}
+    </section>`;
+}
+
+function attBoard() {
+  $("#att-body").innerHTML = `<section class="card-box">${pointsBoardHtml()}</section>`;
+}
+
+function attLog() {
+  const A = state.att;
+  const byDay = new Map();
+  A.rows.forEach((r) => { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); });
+  $("#att-body").innerHTML = A.sessions.length ? `<div class="att-log">${A.sessions.map((ss) => {
+    const rows = byDay.get(ss.day) || [];
+    const abs = rows.filter((r) => r.status === "absent").map((r) => profile(r.user_id)).filter(Boolean);
+    const pres = rows.filter((r) => r.status === "present").length;
+    return `<div class="al-row">
+      <div class="al-date"><b>${fmtDayShort(ss.day)}</b><small>${tx("سجّله {name}", { name: esc(profile(ss.updated_by || ss.taken_by)?.full_name || "—") })}</small></div>
+      <div class="al-counts"><span class="ok">${tx("{n} حاضر", { n: pres })}</span><span class="bad">${tx("{n} غايب", { n: abs.length })}</span></div>
+      <div class="al-abs">${abs.length ? abs.map((p) => `<span class="al-chip">${avatar(p, "xs")}${esc(p.full_name)}</span>`).join("") : `<span class="meta">${tx("الكل حضر")} 🎉</span>`}</div>
+      ${isTaker() ? `<button class="btn sm ghost" data-edit-day="${ss.day}">${icon("edit", "sm")}تعديل</button>` : ""}
+    </div>`;
+  }).join("")}</div>` : `<div class="empty"><div class="ill">${icon("calendar")}</div><b>لسه مفيش غياب متسجل</b>${isTaker() ? "ابدأ من تبويب «تسجيل الغياب»." : "مسؤول الغياب هو اللي بيسجله بعد كل استاند أب."}</div>`;
+  $$("[data-edit-day]").forEach((b) => b.onclick = () => { state.att.day = b.dataset.editDay; state.att.tab = "take"; renderAttendance(); });
+}
+
+function attTake() {
+  const A = state.att;
+  const today = cairoToday();
+  if (!A.day) {
+    // default: today if it's a standup day, otherwise the most recent standup day
+    let d = new Date(today + "T12:00:00");
+    for (let i = 0; i < 7 && A.days.length && !A.days.includes(d.getDay()); i++) d.setDate(d.getDate() - 1);
+    A.day = d.toLocaleDateString("en-CA");
+  }
+  const day = A.day;
+  const session = A.sessions.find((x) => x.day === day);
+  const existing = new Map(A.rows.filter((r) => r.day === day).map((r) => [r.user_id, r.status]));
+  const people = state.profiles.filter((p) => p.active || existing.has(p.id)).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+  if (A.draftDay !== day) { A.draft = new Map(people.map((p) => [p.id, existing.get(p.id) || "present"])); A.draftDay = day; }
+  const wd = new Date(day + "T12:00:00").getDay();
+  const absentN = [...A.draft.values()].filter((v) => v === "absent").length;
+  $("#att-body").innerHTML = `
+    <section class="card-box take-box">
+      <div class="take-top">
+        <label class="field" style="margin:0"><span>يوم الاستاند أب</span><input class="input" type="date" id="att-day" value="${day}" max="${today}"></label>
+        <div class="take-info">
+          <b>${fmtDayLong(day)}</b>
+          ${session ? `<span class="pill s-review">${tx("متسجل قبل كده — بتعدّل")}</span>` : `<span class="pill s-todo">${tx("تسجيل جديد")}</span>`}
+          ${A.days.length && !A.days.includes(wd) ? `<span class="pill s-blocked">${tx("اليوم ده مش من أيام الاستاند أب")}</span>` : ""}
+        </div>
+      </div>
+      <div class="take-tools">
+        <span class="meta">${tx("دوس على الشخص عشان تغيّره لغايب. الكل حاضر في الأول.")}</span>
+        <span class="take-count"><span class="ok">${tx("{n} حاضر", { n: people.length - absentN })}</span><span class="bad">${tx("{n} غايب", { n: absentN })}</span></span>
+      </div>
+      <div class="take-grid">${people.map((p) => {
+        const st = A.draft.get(p.id) || "present";
+        return `<button type="button" class="take-p ${st}" data-tp="${p.id}" aria-pressed="${st === "absent"}">
+          ${avatar(p)}<span class="tp-name"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></span>
+          <span class="tp-st">${icon(st === "absent" ? "close" : "check", "sm")}${st === "absent" ? tx("غايب") : tx("حاضر")}</span>
+        </button>`;
+      }).join("")}</div>
+      <div class="modal-foot">
+        ${session ? `<button class="btn danger ghost" id="att-del">${icon("trash", "sm")}مسح تسجيل اليوم ده</button><span class="spacer"></span>` : ""}
+        <button class="btn primary" id="att-save">${icon("check")}${session ? "حفظ التعديل" : "حفظ الغياب"}</button>
+      </div>
+    </section>`;
+  $("#att-day").onchange = (e) => { if (!e.target.value) return; A.day = e.target.value; attTake(); };
+  $$("[data-tp]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.tp;
+    A.draft.set(id, A.draft.get(id) === "absent" ? "present" : "absent");
+    const y = window.scrollY; attTake(); window.scrollTo({ top: y });
+  });
+  $("#att-save").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    const rows = [...A.draft.entries()].map(([user_id, status]) => ({ user_id, status }));
+    const { error } = await sb.rpc("save_attendance", { p_day: day, p_rows: rows });
+    if (error) { btn.disabled = false; return toast(friendly(error), true); }
+    await Promise.all([loadAttData(), loadAttMeta()]);
+    A.draftDay = null;
+    toast(tx("اتسجل غياب {day}", { day: fmtDayShort(day) }));
+    attTake(); renderNavPts();
+  };
+  const del = $("#att-del");
+  if (del) del.onclick = async () => {
+    const ok = await confirmDialog({ title: tx("مسح تسجيل {day}؟", { day: fmtDayShort(day) }), body: tx("الحضور والغياب بتوع اليوم ده هيتمسحوا والنقاط هتتحسب من غيرهم."), ok: "مسح" });
+    if (!ok) return;
+    const { data, error } = await sb.from("attendance_sessions").delete().eq("day", day).select("day");
+    if (error || !data?.length) return toast(error ? friendly(error) : tx("مقدرتش أمسح"), true);
+    await Promise.all([loadAttData(), loadAttMeta()]);
+    A.draftDay = null; toast(tx("اتمسح")); attTake();
+  };
+}
+
+function attAdmin() {
+  const A = state.att;
+  const takers = state.profiles.filter((p) => A.takers.has(p.id));
+  const candidates = state.profiles.filter((p) => p.active && !p.is_admin && !A.takers.has(p.id)).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+  const active = state.profiles.filter((p) => p.active).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+  $("#att-body").innerHTML = `
+    <div class="att-admin">
+      <section class="card-box">
+        <h3>${icon("calendar", "sm")}أيام الاستاند أب</h3>
+        <div class="day-chips">${[0, 1, 2, 3, 4, 5, 6].map((d) => `<label class="day-chip"><input type="checkbox" value="${d}" ${A.days.includes(d) ? "checked" : ""}><span>${dayName(d)}</span></label>`).join("")}</div>
+        <button class="btn sm primary" id="days-save" style="margin-top:12px">حفظ الأيام</button>
+      </section>
+      <section class="card-box">
+        <h3>${icon("users", "sm")}مسؤولين الغياب</h3>
+        <p class="meta" style="margin-top:0">الأدمن يقدر يسجل الغياب دايمًا. ضيف هنا أي حد تاني يسجله ويعدّله بأثر رجعي.</p>
+        <div class="taker-list">${takers.length ? takers.map((p) => `<div class="taker">${avatar(p, "sm")}<span><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></span><button class="icon-btn" data-rm-taker="${p.id}" aria-label="شيل" title="شيل">${icon("close", "sm")}</button></div>`).join("") : `<p class="meta">مفيش مسؤولين غيرك لسه.</p>`}</div>
+        <div class="taker-add"><select class="input" id="taker-sel"><option value="">اختار موظف…</option>${candidates.map((p) => `<option value="${p.id}">${esc(p.full_name)}${p.job_title ? " — " + esc(p.job_title) : ""}</option>`).join("")}</select><button class="btn primary" id="taker-add">${icon("plus", "sm")}إضافة</button></div>
+      </section>
+      <section class="card-box span2">
+        <h3>${icon("trophy", "sm")}نقاط شكر</h3>
+        <form class="thx-form" id="thx-form">
+          <select class="input" name="user" required><option value="">الموظف…</option>${active.map((p) => `<option value="${p.id}">${esc(p.full_name)}</option>`).join("")}</select>
+          <input class="input" name="points" type="number" min="1" max="1000" step="1" placeholder="عدد النقاط" required>
+          <input class="input" name="reason" maxlength="300" placeholder="السبب (اختياري)">
+          <button class="btn primary" type="submit">${icon("plus", "sm")}إضافة النقاط</button>
+        </form>
+        ${A.awards.length ? `<div class="pts-log">${A.awards.slice(0, 50).map((a) => `
+          <div class="pl-row k-thx">
+            <span class="pl-dot">${icon("trophy", "sm")}</span>
+            <div class="pl-main"><b>${esc(profile(a.user_id)?.full_name || "—")}</b><small dir="auto">${a.reason ? esc(a.reason) + " · " : ""}${fmtDayLong(a.created_at.slice(0, 10))}</small></div>
+            <b class="pl-pts">+${a.points}</b>
+            <button class="icon-btn" data-rm-award="${a.id}" aria-label="مسح" title="مسح">${icon("trash", "sm")}</button>
+          </div>`).join("")}</div>` : ""}
+      </section>
+    </div>`;
+  $("#days-save").onclick = async () => {
+    const days = $$(".day-chip input:checked").map((i) => Number(i.value));
+    const { error } = await sb.from("standup_settings").update({ weekdays: days, updated_by: state.me.id, updated_at: new Date().toISOString() }).eq("id", 1);
+    if (error) return toast(friendly(error), true);
+    A.days = days; toast(tx("اتحفظت أيام الاستاند أب")); renderAttendance();
+  };
+  $("#taker-add").onclick = async () => {
+    const id = $("#taker-sel").value; if (!id) return;
+    const { error } = await sb.from("attendance_takers").insert({ user_id: id, added_by: state.me.id });
+    if (error) return toast(friendly(error), true);
+    A.takers.add(id); toast(tx("بقى مسؤول غياب")); attAdmin();
+  };
+  $$("[data-rm-taker]").forEach((b) => b.onclick = async () => {
+    const { error } = await sb.from("attendance_takers").delete().eq("user_id", b.dataset.rmTaker);
+    if (error) return toast(friendly(error), true);
+    A.takers.delete(b.dataset.rmTaker); attAdmin();
+  });
+  $("#thx-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target), btn = e.submitter; btn.disabled = true;
+    const row = { user_id: f.get("user"), points: Number(f.get("points")), reason: String(f.get("reason") || "").trim() || null, given_by: state.me.id };
+    const { error } = await sb.from("points_awards").insert(row);
+    btn.disabled = false;
+    if (error) return toast(friendly(error), true);
+    await Promise.all([loadAttData(), loadAttMeta()]);
+    toast(tx("اتضافت {n} نقطة لـ {name}", { n: row.points, name: profile(row.user_id)?.full_name || "" })); attAdmin();
+  };
+  $$("[data-rm-award]").forEach((b) => b.onclick = async () => {
+    const ok = await confirmDialog({ title: tx("مسح نقاط الشكر دي؟"), ok: "مسح" }); if (!ok) return;
+    const { data, error } = await sb.from("points_awards").delete().eq("id", b.dataset.rmAward).select("id");
+    if (error || !data?.length) return toast(error ? friendly(error) : tx("مقدرتش أمسح"), true);
+    await Promise.all([loadAttData(), loadAttMeta()]); attAdmin();
+  });
+}
+function renderNavPts() { /* points live in the page header & home; nothing in the nav */ }
+
 
 function renderSettings() {
   const themes = [
