@@ -1256,3 +1256,10 @@ html[data-splash="skip"] #splash { display: none; }
   .take-box .modal-foot { position: sticky; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 5; background: var(--card); margin: 0 -20px -18px; padding: 12px 20px; border-top: 1px solid var(--line-2); border-radius: 0 0 var(--r) var(--r); }
   .rules { gap: 6px; } .rule { font-size: 12px; }
 }
+.rule.base b { background: var(--brand); }
+.pts-cycle { margin: -6px 0 6px; font-size: 12.5px; color: var(--ink-3); }
+.cycle-pick { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.cycle-pick > span { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.cycle-pick select { max-width: 320px; }
+.k-base .pl-dot { background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
+.k-base .pl-pts { color: var(--brand); }

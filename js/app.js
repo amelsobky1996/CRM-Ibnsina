@@ -18,6 +18,7 @@ const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "�
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
+  flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   dots: '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
@@ -2261,6 +2262,45 @@ const fmtDayShort = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE()
 const isTaker = () => !!state.me && (state.me.is_admin || state.att.takers.has(state.me.id));
 const signed = (n) => (n > 0 ? "+" : "") + n;
 const signedH = (n) => `<bdi dir="ltr">${signed(n)}</bdi>`;
+// points cycle: 16th of a month -> 15th of the next; everyone starts each cycle at 100
+const PTS_BASE = 100;
+const pad2 = (n) => String(n).padStart(2, "0");
+function cycleStartOf(d) { let [y, m, dd] = d.split("-").map(Number); if (dd < 16) { m--; if (!m) { m = 12; y--; } } return `${y}-${pad2(m)}-16`; }
+function cycleEndOf(st) { let [y, m] = st.split("-").map(Number); m++; if (m > 12) { m = 1; y++; } return `${y}-${pad2(m)}-15`; }
+const inCycle = (d, st) => d >= st && d <= cycleEndOf(st);
+const curCycle = () => cycleStartOf(cairoToday());
+const awardDay = (a) => new Date(a.created_at).toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+const fmtDM = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { day: "numeric", month: "long" });
+const cycleLabel = (st) => tx("من {a} لـ {b}", { a: fmtDM(st), b: fmtDM(cycleEndOf(st)) });
+const ptsTone = (t) => (t > PTS_BASE ? "pos" : t < PTS_BASE ? "neg" : "");
+function cycleList() {
+  const A = state.att, cur = curCycle();
+  let first = cur;
+  for (const ss of A.sessions) { const c = cycleStartOf(ss.day); if (c < first) first = c; }
+  for (const a of A.awards) { const c = cycleStartOf(awardDay(a)); if (c < first) first = c; }
+  const out = [];
+  for (let c = cur; c >= first && out.length < 60; ) { out.push(c); let [y, m] = c.split("-").map(Number); m--; if (!m) { m = 12; y--; } c = `${y}-${pad2(m)}-16`; }
+  return out;
+}
+async function loadCyclePoints(st) {
+  const { data, error } = await sb.rpc("points_summary", { p_start: st });
+  if (error) throw error;
+  state.att.cyclePoints = new Map((data || []).map((r) => [r.user_id, r]));
+  state.att.cyclePointsFor = st;
+}
+function cyclePicker() {
+  const A = state.att, list = cycleList();
+  return `<div class="cycle-pick"><span>${icon("calendar", "sm")}الدورة</span><select class="input" id="cycle-sel">${list.map((c, i) => `<option value="${c}" ${c === A.cycle ? "selected" : ""}>${cycleLabel(c)}${i === 0 ? " · " + tx("الحالية") : ""}</option>`).join("")}</select></div>`;
+}
+function wireCyclePicker(rerender) {
+  const sel = $("#cycle-sel"); if (!sel) return;
+  sel.onchange = async () => {
+    state.att.cycle = sel.value;
+    try { if (sel.value !== curCycle()) await loadCyclePoints(sel.value); } catch (e) { return toast(friendly(e), true); }
+    rerender();
+  };
+}
+const pointsFor = () => (state.att.cycle && state.att.cycle !== curCycle() && state.att.cyclePointsFor === state.att.cycle ? state.att.cyclePoints : state.att.points);
 
 async function loadAttMeta() {
   const [tk, st, pts] = await Promise.all([
@@ -2271,6 +2311,7 @@ async function loadAttMeta() {
   if (!tk.error) state.att.takers = new Set((tk.data || []).map((r) => r.user_id));
   if (!st.error && st.data) state.att.days = st.data.weekdays || [];
   if (!pts.error) state.att.points = new Map((pts.data || []).map((r) => [r.user_id, r]));
+  if (state.att.cycle && state.att.cycle !== curCycle()) { try { await loadCyclePoints(state.att.cycle); } catch (e) { console.error(e); } }
 }
 async function loadAttData() {
   const [ss, at, aw] = await Promise.all([
@@ -2284,10 +2325,10 @@ async function loadAttData() {
   state.att.awards = aw.data || [];
   state.att.loaded = true;
 }
-const myPoints = (id = state.me.id) => state.att.points.get(id) || { total: 0, present: 0, absent: 0, penalty: 0, thanks: 0 };
+const myPoints = (id = state.me.id, map = state.att.points) => map.get(id) || { total: PTS_BASE, present: 0, absent: 0, penalty: 0, thanks: 0 };
 
-function pointsBoardHtml(limit = 0) {
-  const people = state.profiles.filter((p) => p.active).map((p) => ({ p, s: myPoints(p.id) }))
+function pointsBoardHtml(limit = 0, map = state.att.points) {
+  const people = state.profiles.filter((p) => p.active).map((p) => ({ p, s: myPoints(p.id, map) }))
     .sort((a, b) => b.s.total - a.s.total || a.p.full_name.localeCompare(b.p.full_name, "ar"));
   const list = limit ? people.slice(0, limit) : people;
   let rank = 0, prev = null;
@@ -2296,7 +2337,7 @@ function pointsBoardHtml(limit = 0) {
     return `<div class="pts-row ${x.p.id === state.me.id ? "me" : ""}">
       <span class="pts-rank r${Math.min(rank, 4)}">${rank}</span>
       <div class="person">${avatar(x.p, "sm")}<div><b>${esc(x.p.full_name)}</b><small>${esc(x.p.job_title || "")}</small></div></div>
-      <b class="pts-val ${x.s.total < 0 ? "neg" : x.s.total > 0 ? "pos" : ""}">${signedH(x.s.total)}</b>
+      <b class="pts-val ${ptsTone(x.s.total)}">${x.s.total}</b>
     </div>`;
   }).join("")}</div>`;
 }
@@ -2306,7 +2347,8 @@ function homePointsCard() {
   return `
     <section class="mini-card pts-card">
       <h3>${icon("trophy", "sm")}نقاطي</h3>
-      <div class="pts-big ${s.total < 0 ? "neg" : s.total > 0 ? "pos" : ""}"><b>${signedH(s.total)}</b><span>نقطة</span></div>
+      <p class="pts-cycle">${cycleLabel(curCycle())}</p>
+      <div class="pts-big ${ptsTone(s.total)}"><b>${s.total}</b><span>${tx("من {n} نقطة", { n: PTS_BASE })}</span></div>
       <div class="pts-break">
         <span class="ok">${icon("check", "sm")}${tx("حضور {n}", { n: s.present })}</span>
         <span class="bad">${icon("close", "sm")}${tx("غياب {n}", { n: s.absent })}</span>
@@ -2336,17 +2378,19 @@ async function renderAttendance() {
   if (taker) tabs.unshift(["take", "تسجيل الغياب"]);
   if (me.is_admin) tabs.push(["admin", "الإعدادات والشكر"]);
   if (!tabs.some(([k]) => k === A.tab)) A.tab = taker ? "take" : "me";
+  if (!A.cycle) A.cycle = curCycle();
 
   view.innerHTML = `
     <div class="page-head">
       <div><h1>الحضور والنقاط</h1>
-        <p>${tx("الاستاند أب: {days}", { days: A.days.length ? A.days.slice().sort().map((d) => dayName(d)).join(LANG === "en" ? ", " : "، ") : tx("مفيش أيام متحددة") })}</p></div>
-      <div class="pts-head-me ${s.total < 0 ? "neg" : s.total > 0 ? "pos" : ""}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${signedH(s.total)}</b></div>
+        <p>${tx("الدورة الحالية {range}", { range: cycleLabel(curCycle()) })} · ${tx("الاستاند أب: {days}", { days: A.days.length ? A.days.slice().sort().map((d) => dayName(d)).join(LANG === "en" ? ", " : "، ") : tx("مفيش أيام متحددة") })}</p></div>
+      <div class="pts-head-me ${ptsTone(s.total)}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${s.total}</b></div>
     </div>
     <div class="rules">
+      <span class="rule base"><b>${PTS_BASE}</b>رصيد البداية كل دورة (من يوم 16 لـ يوم 15)</span>
       <span class="rule ok"><b>+${PTS.present}</b>حضور الاستاند أب</span>
       <span class="rule bad"><b>${PTS.absent}</b>غياب</span>
-      <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الشهر</span>
+      <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الدورة</span>
       <span class="rule thx"><b>+</b>نقاط شكر من الإدارة</span>
     </div>
     <div class="tabs" role="tablist"><span class="pill-bg"></span>${tabs.map(([k, l]) => `<button class="tab ${A.tab === k ? "on" : ""}" data-atab="${k}" role="tab" aria-selected="${A.tab === k}">${l}</button>`).join("")}</div>
@@ -2357,43 +2401,52 @@ async function renderAttendance() {
 }
 
 function attMine() {
-  const A = state.att, me = state.me.id, s = myPoints();
-  const rows = A.rows.filter((r) => r.user_id === me);
-  // penalty events: every 3rd absence of a month
-  const byMonth = {};
+  const A = state.att, me = state.me.id, cyc = A.cycle || curCycle();
+  const s = myPoints(me, pointsFor());
+  const rows = A.rows.filter((r) => r.user_id === me && inCycle(r.day, cyc));
+  let absN = 0;
   const events = [];
   rows.slice().sort((a, b) => a.day.localeCompare(b.day)).forEach((r) => {
     if (r.status === "present") events.push({ when: r.day, pts: PTS.present, label: tx("حضور الاستاند أب"), kind: "ok" });
     else {
-      const k = r.day.slice(0, 7); byMonth[k] = (byMonth[k] || 0) + 1;
+      absN++;
       events.push({ when: r.day, pts: PTS.absent, label: tx("غياب عن الاستاند أب"), kind: "bad" });
-      if (byMonth[k] % 3 === 0) events.push({ when: r.day, pts: PTS.every3, label: tx("خصم تكرار الغياب ({n} غيابات الشهر ده)", { n: byMonth[k] }), kind: "bad" });
+      if (absN % 3 === 0) events.push({ when: r.day, pts: PTS.every3, label: tx("خصم تكرار الغياب ({n} غيابات في الدورة)", { n: absN }), kind: "bad" });
     }
   });
-  A.awards.filter((a) => a.user_id === me).forEach((a) => events.push({ when: a.created_at.slice(0, 10), pts: a.points, label: tx("نقاط شكر") + (a.reason ? ` — ${a.reason}` : ""), kind: "thx", by: a.given_by }));
+  A.awards.filter((a) => a.user_id === me && inCycle(awardDay(a), cyc)).forEach((a) => events.push({ when: awardDay(a), pts: a.points, label: tx("نقاط شكر") + (a.reason ? ` — ${a.reason}` : ""), kind: "thx", by: a.given_by }));
   events.sort((a, b) => b.when.localeCompare(a.when));
-  const monthKey = cairoToday().slice(0, 7);
-  const monthAbs = rows.filter((r) => r.status === "absent" && r.day.startsWith(monthKey)).length;
+  const isCur = cyc === curCycle();
   $("#att-body").innerHTML = `
+    ${cyclePicker()}
     <div class="stats">
-      <div class="stat ${s.total < 0 ? "t-bad" : "t-ok"}"><div class="ico">${icon("trophy")}</div><b>${signedH(s.total)}</b><span>رصيد النقاط</span></div>
+      <div class="stat ${s.total < PTS_BASE ? "t-bad" : "t-ok"}"><div class="ico">${icon("trophy")}</div><b>${s.total}</b><span>${isCur ? tx("رصيدك في الدورة دي") : tx("رصيدك في آخر الدورة")}</span></div>
       <div class="stat t-ok"><div class="ico">${icon("check")}</div><b>${s.present}</b><span>مرات الحضور</span></div>
       <div class="stat t-bad"><div class="ico">${icon("close")}</div><b>${s.absent}</b><span>مرات الغياب</span></div>
-      <div class="stat t-warn"><div class="ico">${icon("alert")}</div><b>${monthAbs}</b><span>${monthAbs % 3 === 2 ? tx("غياب الشهر ده — الجاي عليه −10") : tx("غياب الشهر ده")}</span></div>
+      <div class="stat t-warn"><div class="ico">${icon("alert")}</div><b>${s.penalty ? "−" + s.penalty : 0}</b><span>${isCur && s.absent % 3 === 2 ? tx("خصم التكرار — الغياب الجاي عليه −10") : tx("خصم تكرار الغياب")}</span></div>
     </div>
     <section class="card-box">
       <h3>${icon("history", "sm")}سجل نقاطي</h3>
-      ${events.length ? `<div class="pts-log">${events.map((e) => `
+      <div class="pts-log">
+        ${events.map((e) => `
         <div class="pl-row k-${e.kind}">
           <span class="pl-dot">${icon(e.kind === "ok" ? "check" : e.kind === "thx" ? "trophy" : "close", "sm")}</span>
           <div class="pl-main"><b dir="auto">${esc(e.label)}</b><small>${fmtDayLong(e.when)}${e.by && profile(e.by) ? " · " + tx("من {name}", { name: esc(profile(e.by).full_name) }) : ""}</small></div>
           <b class="pl-pts">${signedH(e.pts)}</b>
-        </div>`).join("")}</div>` : `<p class="meta">لسه مفيش نقاط. أول استاند أب هيتسجل هيظهر هنا.</p>`}
+        </div>`).join("")}
+        <div class="pl-row k-base">
+          <span class="pl-dot">${icon("flag", "sm")}</span>
+          <div class="pl-main"><b>${tx("رصيد بداية الدورة")}</b><small>${fmtDayLong(cyc)}</small></div>
+          <b class="pl-pts">${PTS_BASE}</b>
+        </div>
+      </div>
     </section>`;
+  wireCyclePicker(attMine);
 }
 
 function attBoard() {
-  $("#att-body").innerHTML = `<section class="card-box">${pointsBoardHtml()}</section>`;
+  $("#att-body").innerHTML = `${cyclePicker()}<section class="card-box">${pointsBoardHtml(0, pointsFor())}</section>`;
+  wireCyclePicker(attBoard);
 }
 
 function attLog() {
