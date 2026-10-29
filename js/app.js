@@ -2254,7 +2254,7 @@ document.addEventListener("visibilitychange", () => {
 /* =====================================================================
    Attendance (stand-up) + points
    ===================================================================== */
-const PTS = { present: 3, absent: -3, every3: -10 };
+const PTS = { present: 0, absent: -3, every3: -10 };
 const cairoToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 const dayName = (i, style = "long") => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE(), { weekday: style });
 const fmtDayLong = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -2388,7 +2388,6 @@ async function renderAttendance() {
     </div>
     <div class="rules">
       <span class="rule base"><b>${PTS_BASE}</b>رصيد البداية كل دورة (من يوم 16 لـ يوم 15)</span>
-      <span class="rule ok"><b>+${PTS.present}</b>حضور الاستاند أب</span>
       <span class="rule bad"><b>${PTS.absent}</b>غياب</span>
       <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الدورة</span>
       <span class="rule thx"><b>+</b>نقاط شكر من الإدارة</span>
@@ -2407,8 +2406,7 @@ function attMine() {
   let absN = 0;
   const events = [];
   rows.slice().sort((a, b) => a.day.localeCompare(b.day)).forEach((r) => {
-    if (r.status === "present") events.push({ when: r.day, pts: PTS.present, label: tx("حضور الاستاند أب"), kind: "ok" });
-    else {
+    if (r.status === "absent") {
       absN++;
       events.push({ when: r.day, pts: PTS.absent, label: tx("غياب عن الاستاند أب"), kind: "bad" });
       if (absN % 3 === 0) events.push({ when: r.day, pts: PTS.every3, label: tx("خصم تكرار الغياب ({n} غيابات في الدورة)", { n: absN }), kind: "bad" });

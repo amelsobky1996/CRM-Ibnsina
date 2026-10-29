@@ -337,5 +337,5 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- Tables: standup_settings, attendance_takers, attendance_sessions, attendance, points_awards.
 -- RPCs: save_attendance(day, rows), points_summary(). Rules: present +3, absent -3, every 3rd absence in a calendar month -10, + admin thank-you points.
 -- v9 (migration "v9_points_cycle_16th"): points run in cycles from the 16th to the 15th of the next month.
--- Everyone starts each cycle at 100; present +3, absent -3, every 3rd absence in the cycle -10, + thank-you points given in the cycle.
+-- Everyone starts each cycle at 100; (v10: attending adds nothing) absent -3, every 3rd absence in the cycle -10, + thank-you points given in the cycle.
 -- points_summary(p_start date default current cycle) -> user_id, total, present, absent, penalty, thanks, cycle_start, cycle_end.
