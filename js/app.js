@@ -440,7 +440,7 @@ function renderShell() {
       <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
     </div>`;
   window.onhashchange = () => { state.animate = true; route(); };
-  window.onresize = () => placeTabPill(document);
+  window.onresize = () => { placeTabPill(document); sizeBoard(); };
   state.animate = true;
   route();
 }
@@ -642,7 +642,7 @@ function renderTasks() {
        <div class="ico">${icon(ic)}</div><b data-count="${n}">${n}</b><span>${label}</span></button>`;
 
   $("#view").innerHTML = `
-    <div class="page-head">
+    <div class="page-head ${board ? "ph-board" : ""}">
       <div><h1>${filterProj ? esc(filterProj.name) : "المهام"}</h1>
         <p>${filterProj ? esc(filterProj.description || "مهام المشروع") : tx("أهلاً {name}، عندك {n} مهمة مفتوحة.", { name: esc(firstName), n: myOpen })}</p>
         ${filterProj ? `<div class="proj-lead-line">${profile(filterProj.lead_id) ? `${avatar(profile(filterProj.lead_id), "sm")}<span>${tx("المسؤول: {name}", { name: esc(profile(filterProj.lead_id).full_name) })}</span>` : "<span>بدون مسؤول</span>"}</div>` : ""}</div>
@@ -651,7 +651,7 @@ function renderTasks() {
         <button class="btn primary" id="new-task">${icon("plus")}مهمة جديدة</button>
       </div>
     </div>
-    <div class="stats">
+    <div class="stats ${board ? "is-board" : ""}">
       ${statCard("open", "مفتوحة", "inbox", "", stats.open)}
       ${statCard("overdue", "متأخرة", "flame", "t-bad", stats.overdue)}
       ${statCard("week", "خلال 7 أيام", "clock", "t-warn", stats.week)}
@@ -663,7 +663,7 @@ function renderTasks() {
       </div>
       ${filterUser ? `<span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span>` : ""}
     </div>
-    <div class="toolbar">
+    <div class="toolbar ${board ? "tb-board" : ""}">
       <div class="view-toggle" role="group" aria-label="طريقة العرض">
         <button class="${board ? "" : "on"}" data-view="list" aria-pressed="${!board}" title="قائمة">${icon("rows", "sm")}<span>قائمة</span></button>
         <button class="${board ? "on" : ""}" data-view="board" aria-pressed="${board}" title="كانبان">${icon("board", "sm")}<span>كانبان</span></button>
@@ -803,9 +803,9 @@ function checkFileSize(file) {
 }
 
 /* ---------- New task ---------- */
-function openNewTask() {
+function openNewTask(status = "todo") {
   const ov = openModal(`
-    <h2>مهمة جديدة</h2>
+    <h2>مهمة جديدة${status !== "todo" && STATUS[status] ? ` <span class="pill s-${status}">${STATUS[status]}</span>` : ""}</h2>
     <form id="nt">
       <label class="field"><span>عنوان المهمة</span><input class="input" name="title" maxlength="200" required></label>
       <label class="field"><span>المشروع</span><select class="input" name="project_id">${projectOptions(state.view.project)}</select></label>
@@ -847,6 +847,7 @@ function openNewTask() {
         deadline: f.get("deadline") || null,
         priority: f.get("priority"),
         project_id: f.get("project_id") || null,
+        status: STATUS[status] && status !== "done" ? status : "todo",
         created_by: state.me.id,
       }).select().single();
       if (error) throw error;
@@ -1509,48 +1510,130 @@ function wireDrawerExtras(t, ov, work) {
 /* =====================================================================
    Kanban board
    ===================================================================== */
-const getView = () => { try { return localStorage.getItem("dtt.view") === "board" ? "board" : "list"; } catch { return "list"; } };
+// the board became the default view (Trello-style); reset an older saved "list" choice once
+try { if (!localStorage.getItem("dtt.view.v2")) { localStorage.removeItem("dtt.view"); localStorage.setItem("dtt.view.v2", "1"); } } catch { /* ignore */ }
+const getView = () => { try { return localStorage.getItem("dtt.view") === "list" ? "list" : "board"; } catch { return "board"; } };
 const setView = (v) => { try { localStorage.setItem("dtt.view", v); } catch { /* ignore */ } };
 
 function kbCard(t) {
   const p = project(t.project_id), drag = canWorkOn(t);
-  return `<article class="kb-card ${t.status === "done" ? "done" : ""}" data-id="${t.id}" ${drag ? 'draggable="true"' : ""} tabindex="0" role="button" aria-label="${esc(t.title)}" style="${p ? `--c:${esc(p.color)}` : ""}">
+  return `<article class="kb-card ${t.status === "done" ? "done" : ""} ${drag ? "can-drag" : ""}" data-id="${t.id}" tabindex="0" role="button" aria-label="${esc(t.title)}" style="${p ? `--c:${esc(p.color)}` : ""}">
     ${p ? projChip(p) : ""}
     <b>${esc(t.title)}</b>
     <div class="kb-meta">${deadlineCell(t)}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span></div>
     <div class="kb-foot">${avatarsCell(t.assignees)}<span class="progress"><span class="bar ${t.status === "done" ? "done" : ""}"><i style="width:${t.progress}%"></i></span><span class="num">${t.progress}%</span></span></div>
   </article>`;
 }
+const BOARD_COLS = ["todo", "in_progress", "review", "done", "blocked"];
 function boardHtml(list) {
-  return `<div class="board ${state.animate ? "stagger" : ""}">${Object.entries(STATUS).map(([k, l], ci) => {
+  return `<div class="board ${state.animate ? "stagger" : ""}" id="board">${BOARD_COLS.map((k, ci) => {
+    const l = STATUS[k];
     const items = list.filter((t) => t.status === k);
-    return `<section class="kb-col" data-col="${k}" style="--i:${ci}" aria-label="${l}">
-      <header><span class="pill s-${k}">${l}</span><span class="kb-n">${items.length}</span></header>
-      <div class="kb-drop">${items.map(kbCard).join("") || `<div class="kb-empty">اسحب مهمة هنا</div>`}</div>
+    return `<section class="kb-col c-${k}" data-col="${k}" style="--i:${ci}" aria-label="${l}">
+      <header><span class="kb-title"><i class="kb-dot"></i>${l}</span><span class="kb-n">${items.length}</span></header>
+      <div class="kb-drop">${items.map(kbCard).join("")}<div class="kb-empty" ${items.length ? "hidden" : ""}>${tx("اسحب مهمة هنا")}</div></div>
+      ${k !== "done" ? `<button class="kb-add" data-add="${k}">${icon("plus", "sm")}${tx("إضافة مهمة")}</button>` : ""}
     </section>`;
   }).join("")}</div>`;
 }
+function sizeBoard() {
+  const b = $("#board"); if (!b) return;
+  const mobile = matchMedia("(max-width: 960px)").matches;
+  const top = b.getBoundingClientRect().top + window.scrollY;
+  b.style.height = `max(440px, calc(100dvh - ${Math.round(top)}px - ${mobile ? 96 : 24}px))`;
+}
+let boardDrag = null, boardJustDragged = 0;
+document.addEventListener("touchmove", (e) => { if (boardDrag?.active) e.preventDefault(); }, { passive: false });
 function wireBoard() {
-  let dragId = null;
-  $$(".kb-card").forEach((c) => {
-    c.onclick = () => openTask(c.dataset.id);
+  sizeBoard();
+  const board = $("#board"); if (!board) return;
+  $$("[data-add]", board).forEach((b) => b.onclick = () => openNewTask(b.dataset.add));
+  $$(".kb-card", board).forEach((c) => {
+    c.onclick = () => { if (Date.now() - boardJustDragged < 350) return; openTask(c.dataset.id); };
     c.onkeydown = (e) => { if (e.key === "Enter") openTask(c.dataset.id); };
-    c.ondragstart = (e) => {
-      dragId = c.dataset.id;
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", dragId);
-      requestAnimationFrame(() => c.classList.add("dragging"));
-    };
-    c.ondragend = () => { c.classList.remove("dragging"); $$(".kb-col.over").forEach((x) => x.classList.remove("over")); };
-  });
-  $$(".kb-col").forEach((col) => {
-    col.ondragover = (e) => { if (!dragId) return; e.preventDefault(); col.classList.add("over"); };
-    col.ondragleave = (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("over"); };
-    col.ondrop = (e) => {
-      e.preventDefault(); col.classList.remove("over");
-      const id = dragId; dragId = null;
-      if (id) moveTask(id, col.dataset.col);
-    };
+    if (!c.classList.contains("can-drag")) return;
+    c.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || boardDrag) return;
+      const touch = e.pointerType !== "mouse";
+      const d = boardDrag = { card: c, id: c.dataset.id, from: c.closest(".kb-col").dataset.col, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, active: false, touch, pid: e.pointerId };
+      const begin = () => {
+        if (boardDrag !== d || d.active) return;
+        d.active = true;
+        const r = c.getBoundingClientRect();
+        d.ox = d.sx - r.left; d.oy = d.sy - r.top;
+        const g = d.ghost = c.cloneNode(true);
+        g.classList.add("kb-ghost"); g.removeAttribute("tabindex");
+        g.style.width = r.width + "px";
+        document.body.appendChild(g);
+        c.classList.add("kb-ph");
+        board.classList.add("dragging");
+        document.body.classList.add("kb-dragging");
+        navigator.vibrate?.(12);
+        place(d.x, d.y);
+        tick();
+      };
+      if (touch) d.timer = setTimeout(begin, 260);
+      const onMove = (ev) => {
+        d.x = ev.clientX; d.y = ev.clientY;
+        if (!d.active) {
+          const dist = Math.hypot(d.x - d.sx, d.y - d.sy);
+          if (touch) { if (dist > 10) cleanup(); return; }
+          if (dist > 5) begin(); else return;
+        }
+        ev.preventDefault();
+        place(d.x, d.y);
+      };
+      const onUp = () => {
+        const wasActive = d.active, target = d.over;
+        cleanup();
+        if (!wasActive) return;
+        boardJustDragged = Date.now();
+        if (target && target !== d.from) moveTask(d.id, target);
+        else { renderTasks(); afterRender(); }
+      };
+      function cleanup() {
+        clearTimeout(d.timer); cancelAnimationFrame(d.raf);
+        removeEventListener("pointermove", onMove); removeEventListener("pointerup", onUp); removeEventListener("pointercancel", onCancel);
+        d.ghost?.remove(); c.classList.remove("kb-ph");
+        $$(".kb-col.over", board).forEach((x) => x.classList.remove("over"));
+        board.classList.remove("dragging"); document.body.classList.remove("kb-dragging");
+        if (boardDrag === d) boardDrag = null;
+      }
+      const onCancel = () => { const was = d.active; cleanup(); if (was) { renderTasks(); afterRender(); } };
+      addEventListener("pointermove", onMove, { passive: false });
+      addEventListener("pointerup", onUp);
+      addEventListener("pointercancel", onCancel);
+      function place(x, y) {
+        d.ghost && (d.ghost.style.transform = `translate(${x - d.ox}px, ${y - d.oy}px) rotate(${touch ? 2 : 3}deg)`);
+        const under = document.elementFromPoint(x, y);
+        const col = under?.closest?.(".kb-col");
+        $$(".kb-col.over", board).forEach((k) => { if (k !== col) k.classList.remove("over"); });
+        if (!col) return;
+        col.classList.add("over");
+        d.over = col.dataset.col;
+        // move the placeholder to where it would land
+        const drop = $(".kb-drop", col);
+        const cards = $$(".kb-card:not(.kb-ph)", drop);
+        const before = cards.find((k) => { const r = k.getBoundingClientRect(); return y < r.top + r.height / 2; });
+        if (before) { if (c.nextElementSibling !== before) drop.insertBefore(c, before); }
+        else if (c.parentElement !== drop || c.nextElementSibling !== $(".kb-empty", drop)) drop.insertBefore(c, $(".kb-empty", drop));
+        $$(".kb-col", board).forEach((k) => { const n = $$(".kb-card", k).length; $(".kb-empty", k).hidden = n > 0; });
+      }
+      // auto-scroll the board sideways and the column up/down near the edges
+      function tick() {
+        if (boardDrag !== d || !d.active) return;
+        const br = board.getBoundingClientRect(), edge = 60;
+        if (d.x < br.left + edge) board.scrollLeft -= Math.ceil((br.left + edge - d.x) / (touch ? 7 : 4));
+        else if (d.x > br.right - edge) board.scrollLeft += Math.ceil((d.x - (br.right - edge)) / (touch ? 7 : 4));
+        const col = d.over && $(`.kb-col[data-col="${d.over}"] .kb-drop`, board);
+        if (col) {
+          const cr = col.getBoundingClientRect();
+          if (d.y < cr.top + 40) col.scrollTop -= 8; else if (d.y > cr.bottom - 40) col.scrollTop += 8;
+        }
+        d.raf = requestAnimationFrame(tick);
+        place(d.x, d.y);
+      }
+    });
   });
 }
 async function moveTask(id, status) {
