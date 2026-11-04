@@ -37,10 +37,12 @@
   --ease: cubic-bezier(.2, .8, .2, 1);
   --spring: cubic-bezier(.34, 1.56, .64, 1);
   --font: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, system-ui, sans-serif;
+  --page: #FFFFFF;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
     --bg: #0C1322;
+    --page: #0C1322;
     --bg-2: #0F1829;
     --card: #141D30;
     --card-2: #182237;
@@ -62,6 +64,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0C1322;
+    --page: #0C1322;
     --bg-2: #0F1829;
     --card: #141D30;
     --card-2: #182237;
@@ -85,7 +88,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  font-family: var(--font); background: var(--bg); color: var(--ink);
+  font-family: var(--font); background: var(--page); color: var(--ink);
   font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -1427,3 +1430,7 @@ body.kb-dragging, body.kb-dragging * { cursor: grabbing !important; }
   .nav.tight a { padding: 8px 9px; gap: 6px; font-size: 13.5px; }
   .nav.compact a > .i { display: none; }
 }
+
+/* white page: give cards a crisper edge in the light theme */
+:root:not([data-theme="dark"]) { --line-2: #E4EAF2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --line-2: #1D2840; } }
