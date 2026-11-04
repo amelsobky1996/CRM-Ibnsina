@@ -434,13 +434,17 @@ function renderShell() {
           <div class="side-product">Digital Team Tasks Tracker</div>
         </a>
         <nav class="nav" id="nav" aria-label="القائمة الرئيسية"></nav>
+        <div class="nav-more" id="nav-more" hidden>
+          <button class="nav-more-btn" id="nav-more-btn" aria-haspopup="menu" aria-expanded="false">${icon("grid", "sm")}<span>المزيد</span></button>
+          <div class="nav-menu" id="nav-menu" role="menu" hidden></div>
+        </div>
         <div class="side-me" id="side-me"></div>
       </aside>
       <main class="main" id="view"></main>
       <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
     </div>`;
   window.onhashchange = () => { state.animate = true; route(); };
-  window.onresize = () => { placeTabPill(document); sizeBoard(); };
+  window.onresize = () => { placeTabPill(document); sizeBoard(); fitNav(); };
   state.animate = true;
   route();
 }
@@ -474,12 +478,39 @@ function renderNav() {
     <button class="icon-btn" id="logout" title="تسجيل الخروج" aria-label="تسجيل الخروج">${icon("logout")}</button>`;
   $("#logout").onclick = () => sb.auth.signOut();
   renderBell();
+  fitNav(); requestAnimationFrame(fitNav);
+  document.fonts?.ready.then(fitNav);
   $("#me-pass").onclick = () => openPasswordModal(me);
   $("#me-photo").onclick = () => pickFile("image/*", async (file) => {
     try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
     catch (e) { toast(friendly(e), true); }
   });
 }
+
+// Desktop top bar: links that don't fit move into the "More" dropdown
+function fitNav() {
+  const nav = $("#nav"), more = $("#nav-more"), menu = $("#nav-menu");
+  if (!nav || !more) return;
+  const links = $$("a", nav);
+  links.forEach((a) => a.classList.remove("nav-ovf"));
+  more.hidden = true; menu.hidden = true;
+  if (matchMedia("(max-width: 960px)").matches) return;
+  if (nav.scrollWidth <= nav.clientWidth + 1) return;
+  more.hidden = false;
+  for (let i = links.length - 1; i > 0 && nav.scrollWidth > nav.clientWidth + 1; i--) links[i].classList.add("nav-ovf");
+  const hidden = links.filter((a) => a.classList.contains("nav-ovf"));
+  menu.innerHTML = hidden.map((a) => `<a role="menuitem" href="${a.getAttribute("href")}" class="${a.classList.contains("on") ? "on" : ""}">${a.innerHTML}</a>`).join("");
+  $("#nav-more-btn").classList.toggle("on", hidden.some((a) => a.classList.contains("on")));
+  $$("a", menu).forEach((a) => a.onclick = () => closeNavMenu());
+  renderChatBadges();
+}
+function closeNavMenu() { const m = $("#nav-menu"); if (m) m.hidden = true; $("#nav-more-btn")?.setAttribute("aria-expanded", "false"); }
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest?.("#nav-more-btn");
+  if (btn) { const m = $("#nav-menu"); m.hidden = !m.hidden; btn.setAttribute("aria-expanded", String(!m.hidden)); return; }
+  if (!e.target.closest?.("#nav-menu")) closeNavMenu();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNavMenu(); });
 
 function openMoreSheet(rest) {
   const me = state.me, r = currentRoute();
