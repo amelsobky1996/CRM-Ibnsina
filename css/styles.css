@@ -1434,3 +1434,8 @@ body.kb-dragging, body.kb-dragging * { cursor: grabbing !important; }
 /* white page: give cards a crisper edge in the light theme */
 :root:not([data-theme="dark"]) { --line-2: #E4EAF2; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --line-2: #1D2840; } }
+
+/* names/titles next to an avatar always line up on the page's start edge (right in Arabic, left in English),
+   even when a Latin name sits in an Arabic page */
+html[dir="rtl"] .person > div, html[dir="rtl"] .person > div > b, html[dir="rtl"] .person > div > small { text-align: right; }
+html[dir="ltr"] .person > div, html[dir="ltr"] .person > div > b, html[dir="ltr"] .person > div > small { text-align: left; }
