@@ -473,11 +473,13 @@ function renderNav() {
   $("#side-me").innerHTML = `
     <button class="avatar-btn" id="me-photo" title="تغيير صورتي" aria-label="تغيير صورتي">${avatar(me)}</button>
     <div class="who" title="${esc(me.full_name)}"><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></div>
+    <button class="icon-btn hdr-lang" id="hdr-lang" title="${LANG === "en" ? "العربية" : "English"}" aria-label="${LANG === "en" ? "العربية" : "English"}">${LANG === "en" ? "ع" : "EN"}</button>
     <span id="bell-slot"></span>
     <button class="icon-btn" id="me-pass" title="تغيير كلمة السر" aria-label="تغيير كلمة السر">${icon("lock")}</button>
     <button class="icon-btn" id="logout" title="تسجيل الخروج" aria-label="تسجيل الخروج">${icon("logout")}</button>`;
   $("#logout").onclick = () => sb.auth.signOut();
   renderBell();
+  $("#hdr-lang").onclick = () => { setLang(LANG === "en" ? "ar" : "en"); savePrefs(); state.animate = false; renderShell(); };
   fitNav(); requestAnimationFrame(fitNav);
   document.fonts?.ready.then(fitNav);
   $("#me-pass").onclick = () => openPasswordModal(me);

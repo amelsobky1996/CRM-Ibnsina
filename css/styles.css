@@ -1439,3 +1439,6 @@ body.kb-dragging, body.kb-dragging * { cursor: grabbing !important; }
    even when a Latin name sits in an Arabic page */
 html[dir="rtl"] .person > div, html[dir="rtl"] .person > div > b, html[dir="rtl"] .person > div > small { text-align: right; }
 html[dir="ltr"] .person > div, html[dir="ltr"] .person > div > b, html[dir="ltr"] .person > div > small { text-align: left; }
+.side-me .hdr-lang { font: inherit; font-size: 13px; font-weight: 800; letter-spacing: .02em; color: #fff; }
+.side-me .hdr-lang:hover { background: rgba(255,255,255,.16); }
+html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex Sans Arabic", var(--font); }
