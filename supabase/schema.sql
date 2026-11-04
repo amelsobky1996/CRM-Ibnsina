@@ -339,3 +339,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- v9 (migration "v9_points_cycle_16th"): points run in cycles from the 16th to the 15th of the next month.
 -- Everyone starts each cycle at 100; (v10: attending adds nothing) absent -3, every 3rd absence in the cycle -10, + thank-you points given in the cycle.
 -- points_summary(p_start date default current cycle) -> user_id, total, present, absent, penalty, thanks, cycle_start, cycle_end.
+-- v11/v12 (migrations "v11_realtime_standup_settings", "v12a..v12e"): standup_settings added to realtime;
+-- Web Push: push_subscriptions table (own rows only), pg_net, private.app_config (push secret + VAPID keys),
+-- send_push() -> edge function "push-send"; triggers push on new chat messages and on every notification.

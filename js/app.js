@@ -314,6 +314,7 @@ async function boot(userId) {
     await Promise.all([loadTasks(), loadProjects(), loadNotifs(), loadMessages(), loadAttMeta()]);
     renderShell();
     subscribe();
+    syncPush();
   } catch (e) {
     console.error(e);
     renderLogin(friendly(e));
@@ -321,41 +322,114 @@ async function boot(userId) {
 }
 
 let channel, reloadTimer;
+// Realtime is split into independent channels so one failing feed can never silence the others
+// (e.g. chat). Every channel reconnects by itself, and the app catches up whenever it comes back
+// to the foreground or the network returns.
+let chans = [], rtRetry = {}, rtWanted = false;
+function rtChannel(name, bind) {
+  const make = () => {
+    const ch = sb.channel(`${name}-${state.me.id}-${Date.now()}`);
+    bind(ch);
+    ch._dttName = name;
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") { rtRetry[name] = 0; return; }
+      if (!rtWanted || !["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) return;
+      if (status === "CLOSED" && !chans.includes(ch)) return; // we closed it on purpose
+      const n = (rtRetry[name] = (rtRetry[name] || 0) + 1);
+      setTimeout(() => {
+        if (!rtWanted || !chans.includes(ch)) return;
+        chans = chans.filter((c) => c !== ch);
+        sb.removeChannel(ch);
+        chans.push(make());
+      }, Math.min(30000, 1000 * 2 ** Math.min(n, 5)));
+    });
+    return ch;
+  };
+  chans.push(make());
+}
+function unsubscribeAll() {
+  rtWanted = false;
+  const old = chans; chans = [];
+  old.forEach((c) => sb.removeChannel(c));
+  channel = null;
+}
+// re-sync after the app was in the background / offline (sockets often die there on phones)
+async function catchUp() {
+  if (!state.me) return;
+  const dead = chans.filter((c) => c.state !== "joined");
+  if (dead.length) {
+    chans = chans.filter((c) => c.state === "joined");
+    dead.forEach((c) => sb.removeChannel(c));
+    const names = new Set(dead.map((c) => c._dttName));
+    RT_FEEDS.filter(([n]) => names.has(n)).forEach(([n, bind]) => rtChannel(n, bind));
+  }
+  try {
+    await Promise.all([loadMessages(), loadNotifs()]);
+    renderBell(); renderChatBadges();
+    const r = currentRoute();
+    if (r.page === "chat") { fillConvs(r.params.get("with")); if (r.params.get("with")) { fillThread(r.params.get("with")); markThreadRead(r.params.get("with")); } }
+  } catch (e) { console.error(e); }
+}
+let RT_FEEDS = [];
+document.addEventListener("visibilitychange", () => { if (!document.hidden) catchUp(); });
+addEventListener("online", () => catchUp());
+addEventListener("focus", () => { if (chans.some((c) => c.state !== "joined")) catchUp(); });
+// safety net: if the chat feed is down, poll for new messages
+setInterval(() => {
+  if (!state.me || document.hidden) return;
+  const chat = chans.find((c) => c._dttName === "chat");
+  if (!chat || chat.state !== "joined") catchUp();
+}, 15000);
+
 function subscribe() {
-  if (channel) sb.removeChannel(channel);
+  unsubscribeAll();
+  rtWanted = true;
   const reload = () => {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(async () => {
       if ($("#modal-root").innerHTML) return; // don't re-render under an open form
+      if (currentRoute().page === "chat") { try { await Promise.all([loadProfiles(), loadTasks(), loadProjects()]); renderNav(); } catch (e) { console.error(e); } return; }
       try {
         await Promise.all([loadProfiles(), loadTasks(), loadProjects()]);
         state.animate = false; route();
       } catch (e) { console.error(e); }
     }, 500);
   };
-  channel = sb.channel("crm");
-  for (const table of ["tasks", "task_assignees", "profiles", "projects"])
-    channel.on("postgres_changes", { event: "*", schema: "public", table }, reload);
-  channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async (payload) => {
-    await loadNotifs();
-    renderBell(true);
-    const n = payload.new && state.notifs.find((x) => x.id === payload.new.id);
-    if (n) { const tmp = document.createElement("div"); tmp.innerHTML = notifText(n); toast(tmp.textContent); }
-  });
-  channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${state.me.id}` }, async () => { await loadNotifs(); renderBell(); });
-  const attReload = () => debounced(async () => {
+  const attRefresh = async () => {
     try {
       await loadAttMeta();
       if (state.att.loaded) await loadAttData();
       const pg = currentRoute().page;
       if ((pg === "home" || (pg === "attendance" && state.att.tab !== "take")) && !$("#modal-root").innerHTML) { state.animate = false; route(); }
     } catch (e) { console.error(e); }
-  }, 600);
-  for (const table of ["attendance_sessions", "points_awards", "attendance_takers", "standup_settings"])
-    channel.on("postgres_changes", { event: "*", schema: "public", table }, attReload);
-  for (const col of ["recipient_id", "sender_id"])
-    channel.on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `${col}=eq.${state.me.id}` }, (pl) => onMessageRealtime(pl.eventType, pl.new));
-  channel.subscribe();
+  };
+  const attReload = () => debounced(attRefresh, 600);
+  const me = state.me.id;
+  RT_FEEDS = [
+    ["chat", (ch) => {
+      for (const col of ["recipient_id", "sender_id"])
+        ch.on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `${col}=eq.${me}` }, (pl) => onMessageRealtime(pl.eventType, pl.new));
+    }],
+    ["notifs", (ch) => {
+      ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async (payload) => {
+        await loadNotifs();
+        renderBell(true);
+        const n = payload.new && state.notifs.find((x) => x.id === payload.new.id);
+        if (n) { const tmp = document.createElement("div"); tmp.innerHTML = notifText(n); toast(tmp.textContent); }
+      });
+      ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async () => { await loadNotifs(); renderBell(); });
+    }],
+    ["core", (ch) => {
+      for (const table of ["tasks", "task_assignees", "profiles", "projects"])
+        ch.on("postgres_changes", { event: "*", schema: "public", table }, reload);
+    }],
+    ["att", (ch) => {
+      for (const table of ["attendance_sessions", "points_awards", "attendance_takers", "standup_settings"])
+        ch.on("postgres_changes", { event: "*", schema: "public", table }, attReload);
+    }],
+  ];
+  RT_FEEDS.forEach(([n, bind]) => rtChannel(n, bind));
+  channel = chans[0];
 }
 
 function renderSetup() {
@@ -369,7 +443,7 @@ function renderSetup() {
 
 function renderLogin(message = "") {
   splashDone();
-  if (channel) { sb.removeChannel(channel); channel = null; }
+  unsubscribeAll();
   state.me = null;
   $("#modal-root").innerHTML = "";
   const rays = Array.from({ length: 14 }, (_, i) =>
@@ -477,7 +551,7 @@ function renderNav() {
     <span id="bell-slot"></span>
     <button class="icon-btn" id="me-pass" title="تغيير كلمة السر" aria-label="تغيير كلمة السر">${icon("lock")}</button>
     <button class="icon-btn" id="logout" title="تسجيل الخروج" aria-label="تسجيل الخروج">${icon("logout")}</button>`;
-  $("#logout").onclick = () => sb.auth.signOut();
+  $("#logout").onclick = async () => { await dropPushForLogout(); sb.auth.signOut(); };
   renderBell();
   $("#hdr-lang").onclick = () => { setLang(LANG === "en" ? "ar" : "en"); savePrefs(); state.animate = false; renderShell(); };
   fitNav(); requestAnimationFrame(fitNav);
@@ -539,7 +613,7 @@ function openMoreSheet(rest) {
   $$(".sheet-list a", ov).forEach((a) => a.addEventListener("click", () => closeModal()));
   $('[data-act="photo"]', ov).onclick = () => { closeModal(); $("#me-photo")?.click(); };
   $('[data-act="pass"]', ov).onclick = () => { closeModal(); setTimeout(() => openPasswordModal(me), 220); };
-  $('[data-act="out"]', ov).onclick = () => { closeModal(); sb.auth.signOut(); };
+  $('[data-act="out"]', ov).onclick = async () => { closeModal(); await dropPushForLogout(); sb.auth.signOut(); };
 }
 
 function currentRoute() {
@@ -572,6 +646,13 @@ function route() {
       if (state.view.user || state.view.project) { state.view.tab = "all"; state.view.status = "all"; }
     }
     renderTasks();
+    const openId = params.get("task");
+    if (openId) {
+      history.replaceState(null, "", "#/tasks");
+      state.lastHash = "#/tasks";
+      if (state.tasks.some((t) => t.id === openId)) setTimeout(() => openTask(openId), 60);
+      else toast("المهمة دي مبقتش موجودة", true);
+    }
   }
   if (state.animate) {
     view.classList.remove("enter"); void view.offsetWidth; view.classList.add("enter");
@@ -1726,6 +1807,7 @@ function renderHome() {
   const periods = [[30, "آخر 30 يوم"], [90, "آخر 3 شهور"], [0, "من الأول"]];
 
   $("#view").innerHTML = `
+    ${pushPromptHtml()}
     <div class="home-hero">
       <div class="hero-text">
         <p class="hero-date">${esc(dateLong)}</p>
@@ -1776,6 +1858,7 @@ function renderHome() {
   $$("[data-open]").forEach((b) => b.onclick = () => openTask(b.dataset.open));
   $$("input[name=period]").forEach((r) => r.onchange = () => { state.homePeriod = Number(r.value); fillLeaderboard(true); });
   fillLeaderboard(state.animate);
+  wirePushPrompt();
 }
 
 async function fillLeaderboard(animate) {
@@ -2884,6 +2967,109 @@ function printDoc(html, title) {
   if (img && !img.complete) { img.onload = go; img.onerror = go; } else go();
 }
 
+
+/* =====================================================================
+   Push notifications (arrive while the app is closed)
+   ===================================================================== */
+const VAPID_PUBLIC = "BDvvXziITBMCjcljXEhK5JGjo5y2WyPRimAAl_5AK6WDGLAEQRyv5wJBf4lqbcN6BPlPe4H8EwCYWwcciaIR-8M";
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+function pushStatus() {
+  if (isIOS() && !isStandalone()) return "ios-install";
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  return Notification.permission === "granted" ? "granted" : "default";
+}
+const b64ToBytes = (b64) => { const p = "=".repeat((4 - (b64.length % 4)) % 4); const raw = atob((b64 + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(raw, (c) => c.charCodeAt(0)); };
+async function swReg() {
+  if (!("serviceWorker" in navigator)) throw new Error("no service worker");
+  let reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) reg = await navigator.serviceWorker.register("sw.js");
+  return navigator.serviceWorker.ready.then(() => reg);
+}
+async function savePushSub(sub) {
+  const j = sub.toJSON();
+  const { error } = await sb.from("push_subscriptions").upsert({ user_id: state.me.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200) }, { onConflict: "endpoint" });
+  if (error) throw error;
+}
+async function enablePush() {
+  const st = pushStatus();
+  if (st === "ios-install") { toast(tx("على الآيفون: ضيف السستم للشاشة الرئيسية الأول وافتحه من هناك"), true); return false; }
+  if (st === "unsupported") { toast(tx("المتصفح ده مش بيدعم الإشعارات"), true); return false; }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast(tx("الإشعارات مقفولة من إعدادات المتصفح"), true); return false; }
+  try {
+    const reg = await swReg();
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) });
+    await savePushSub(sub);
+    try { localStorage.setItem("dtt.push", "on"); } catch { /* ignore */ }
+    toast(tx("تمام، الإشعارات هتوصلك حتى والسستم مقفول"));
+    return true;
+  } catch (e) { console.error(e); toast(friendly(e), true); return false; }
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    if (sub) { await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+    try { localStorage.setItem("dtt.push", "off"); } catch { /* ignore */ }
+  } catch (e) { console.error(e); }
+}
+// keep this device's subscription registered under the signed-in user
+async function syncPush() {
+  try {
+    if (pushStatus() !== "granted") return;
+    if ((() => { try { return localStorage.getItem("dtt.push") === "off"; } catch { return false; } })()) return;
+    const reg = await swReg();
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) });
+    await savePushSub(sub);
+  } catch (e) { console.warn("push sync", e); }
+}
+// before signing out, stop this device from receiving the previous user's notifications
+async function dropPushForLogout() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    if (sub) await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+  } catch { /* ignore */ }
+}
+navigator.serviceWorker?.addEventListener("message", (e) => { if (e.data?.type === "open" && e.data.url) location.href = e.data.url; });
+
+async function fillPushRow() {
+  const row = $("#push-row"); if (!row) return;
+  const st = pushStatus();
+  let on = false;
+  if (st === "granted") { try { const reg = await navigator.serviceWorker.getRegistration(); on = !!(await reg?.pushManager.getSubscription()) && localStorage.getItem("dtt.push") !== "off"; } catch { /* ignore */ } }
+  const msg = {
+    "ios-install": tx("على الآيفون: من زرار المشاركة اختار «Add to Home Screen»، وافتح السستم من الأيقونة، وبعدين فعّل الإشعارات.").replace("«Add to Home Screen»", '<bdi dir="ltr">«Add to Home Screen»</bdi>'),
+    unsupported: tx("المتصفح ده مش بيدعم الإشعارات"),
+    denied: tx("الإشعارات مقفولة من إعدادات المتصفح. افتحها من إعدادات الموقع وارجع هنا."),
+  }[st];
+  row.innerHTML = msg ? `<p class="meta" style="margin:0">${msg}</p>` :
+    `<span class="pill ${on ? "s-done" : "s-todo"}">${on ? tx("شغالة على الجهاز ده") : tx("مقفولة على الجهاز ده")}</span>
+     <button class="btn sm ${on ? "ghost" : "primary"}" id="push-toggle">${icon("bell", "sm")}<span>${on ? tx("إيقاف") : tx("تفعيل")}</span></button>`;
+  const b = $("#push-toggle");
+  if (b) b.onclick = async () => { b.disabled = true; if (on) { await disablePush(); toast(tx("اتقفلت الإشعارات على الجهاز ده")); } else await enablePush(); fillPushRow(); };
+}
+function pushPromptHtml() {
+  const st = pushStatus();
+  let dismissed = false; try { dismissed = localStorage.getItem("dtt.pushPrompt") === "no"; } catch { /* ignore */ }
+  if (dismissed || st === "granted" || st === "unsupported" || st === "denied") return "";
+  const ios = st === "ios-install";
+  return `<div class="push-prompt" id="push-prompt">
+    <div class="pp-ic">${icon("bell")}</div>
+    <div class="pp-txt"><b>${tx("فعّل الإشعارات على الجهاز ده")}</b><span>${ios ? tx("على الآيفون: من زرار المشاركة اختار «Add to Home Screen»، وافتح السستم من الأيقونة، وبعدين فعّل الإشعارات.").replace("«Add to Home Screen»", '<bdi dir="ltr">«Add to Home Screen»</bdi>') : tx("عشان توصلك الرسايل والمهام الجديدة حتى والسستم مقفول.")}</span></div>
+    <div class="pp-act">${ios ? "" : `<button class="btn sm primary" id="pp-on">${tx("تفعيل")}</button>`}<button class="btn sm ghost" id="pp-no">${tx("مش دلوقتي")}</button></div>
+  </div>`;
+}
+function wirePushPrompt() {
+  const on = $("#pp-on"), no = $("#pp-no");
+  if (on) on.onclick = async () => { if (await enablePush()) $("#push-prompt")?.remove(); };
+  if (no) no.onclick = () => { try { localStorage.setItem("dtt.pushPrompt", "no"); } catch { /* ignore */ } $("#push-prompt")?.remove(); };
+}
+
 function renderSettings() {
   const themes = [
     ["light", "فاتح", ""],
@@ -2920,8 +3106,13 @@ function renderSettings() {
           <button class="btn sm" id="set-pass">${icon("lock", "sm")}<span>تغيير كلمة السر</span></button>
         </div>
       </section>
+      <section class="set-card">
+        <div class="set-head"><div class="ico">${icon("bell")}</div><div><h3>إشعارات الجهاز</h3><p>توصلك الرسايل والمهام الجديدة حتى والسستم مقفول.</p></div></div>
+        <div class="push-row" id="push-row"></div>
+      </section>
       <p class="meta">الإعدادات دي محفوظة مع حسابك، وبتطبق على أي جهاز تدخل منه.</p>
     </div>`;
+  fillPushRow();
   $$("[data-lang]").forEach((b) => b.onclick = () => {
     if (b.dataset.lang === LANG) return;
     setLang(b.dataset.lang);

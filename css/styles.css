@@ -1442,3 +1442,13 @@ html[dir="ltr"] .person > div, html[dir="ltr"] .person > div > b, html[dir="ltr"
 .side-me .hdr-lang { font: inherit; font-size: 13px; font-weight: 800; letter-spacing: .02em; color: #fff; }
 .side-me .hdr-lang:hover { background: rgba(255,255,255,.16); }
 html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex Sans Arabic", var(--font); }
+
+/* push notifications prompt & settings row */
+.push-prompt { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 16px; border-radius: var(--r); background: color-mix(in srgb, var(--brand) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent); animation: pop .3s var(--spring); }
+.pp-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex: none; background: var(--brand); color: #fff; }
+.pp-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.45; }
+.pp-txt b { font-size: 15px; }
+.pp-txt span { color: var(--ink-2); font-size: 13px; }
+.pp-act { display: flex; gap: 8px; flex: none; }
+.push-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 640px) { .push-prompt { flex-wrap: wrap; } .pp-act { width: 100%; } .pp-act .btn { flex: 1; } }
