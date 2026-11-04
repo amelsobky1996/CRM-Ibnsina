@@ -493,9 +493,14 @@ function fitNav() {
   if (!nav || !more) return;
   const links = $$("a", nav);
   links.forEach((a) => a.classList.remove("nav-ovf"));
+  nav.classList.remove("compact", "tight");
   more.hidden = true; menu.hidden = true;
   if (matchMedia("(max-width: 960px)").matches) return;
-  if (nav.scrollWidth <= nav.clientWidth + 1) return;
+  const fits = () => nav.scrollWidth <= nav.clientWidth + 1;
+  if (fits()) return;
+  nav.classList.add("tight"); if (fits()) return;      // smaller padding
+  nav.classList.add("compact"); if (fits()) return;    // drop the icons
+  
   more.hidden = false;
   for (let i = links.length - 1; i > 0 && nav.scrollWidth > nav.clientWidth + 1; i--) links[i].classList.add("nav-ovf");
   const hidden = links.filter((a) => a.classList.contains("nav-ovf"));
