@@ -163,6 +163,7 @@ const state = {
   teamDirectOnly: false,
   notifs: [],
   msgs: [],
+  statuses: [],
   att: { takers: new Set(), days: [], points: new Map(), sessions: [], rows: [], awards: [], loaded: false, tab: null, day: null, draft: null, draftDay: null },
   chatDrafts: {},
   chatQ: "",
@@ -234,6 +235,27 @@ async function loadTasks() {
   if (error) throw error;
   state.tasks = data.map((t) => ({ ...t, assignees: (t.task_assignees || []).map((a) => a.user_id) }));
 }
+
+async function loadStatuses() {
+  const { data, error } = await sb.from("task_statuses").select("*").order("position");
+  if (error) throw error;
+  state.statuses = data || [];
+}
+// board columns of a project, in order
+const projCols = (pid) => state.statuses.filter((c) => c.project_id === pid).sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at));
+const colById = (id) => state.statuses.find((c) => c.id === id);
+// the column a task sits in (falls back to the first column of its kind)
+function taskCol(t) {
+  if (!t.project_id) return null;
+  const c = colById(t.status_id);
+  if (c && c.project_id === t.project_id) return c;
+  const cols = projCols(t.project_id);
+  return cols.find((x) => x.kind === t.status) || null;
+}
+const statusPill = (t) => {
+  const c = taskCol(t);
+  return c ? `<span class="pill s-col" style="--sc:${esc(c.color)}">${esc(c.name)}</span>` : `<span class="pill s-${t.status}">${STATUS[t.status]}</span>`;
+};
 
 async function loadProjects() {
   const { data, error } = await sb.from("projects").select("*").order("created_at", { ascending: false });
@@ -311,7 +333,7 @@ async function boot(userId) {
     if (!state.me) throw new Error("لا يوجد ملف موظف مرتبط بهذا الحساب");
     if (!state.me.active) { await sb.auth.signOut(); return renderLogin("الحساب ده موقوف. كلّم مديرك."); }
     syncPrefsFromProfile();
-    await Promise.all([loadTasks(), loadProjects(), loadNotifs(), loadMessages(), loadAttMeta()]);
+    await Promise.all([loadTasks(), loadProjects(), loadStatuses(), loadNotifs(), loadMessages(), loadAttMeta()]);
     renderShell();
     subscribe();
     syncPush();
@@ -388,9 +410,9 @@ function subscribe() {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(async () => {
       if ($("#modal-root").innerHTML) return; // don't re-render under an open form
-      if (currentRoute().page === "chat") { try { await Promise.all([loadProfiles(), loadTasks(), loadProjects()]); renderNav(); } catch (e) { console.error(e); } return; }
+      if (currentRoute().page === "chat") { try { await Promise.all([loadProfiles(), loadTasks(), loadProjects(), loadStatuses()]); renderNav(); } catch (e) { console.error(e); } return; }
       try {
-        await Promise.all([loadProfiles(), loadTasks(), loadProjects()]);
+        await Promise.all([loadProfiles(), loadTasks(), loadProjects(), loadStatuses()]);
         state.animate = false; route();
       } catch (e) { console.error(e); }
     }, 500);
@@ -420,7 +442,7 @@ function subscribe() {
       ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async () => { await loadNotifs(); renderBell(); });
     }],
     ["core", (ch) => {
-      for (const table of ["tasks", "task_assignees", "profiles", "projects"])
+      for (const table of ["tasks", "task_assignees", "profiles", "projects", "task_statuses"])
         ch.on("postgres_changes", { event: "*", schema: "public", table }, reload);
     }],
     ["att", (ch) => {
@@ -801,7 +823,7 @@ function renderTasks() {
         const p = project(t.project_id);
         return `
         <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
-          <span class="pill s-${t.status}">${STATUS[t.status]}</span>
+          ${statusPill(t)}
           <span class="t-title"><b>${esc(t.title)}</b>
             <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span ${t.created_by ? `data-pid="${esc(t.created_by)}"` : ""}>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
           ${avatarsCell(t.assignees)}
@@ -922,9 +944,10 @@ function checkFileSize(file) {
 }
 
 /* ---------- New task ---------- */
-function openNewTask(status = "todo") {
+function openNewTask(status = "todo", colId = null) {
+  const col = colId && colById(colId);
   const ov = openModal(`
-    <h2>مهمة جديدة${status !== "todo" && STATUS[status] ? ` <span class="pill s-${status}">${STATUS[status]}</span>` : ""}</h2>
+    <h2>مهمة جديدة${col ? ` <span class="pill s-col" style="--sc:${esc(col.color)}">${esc(col.name)}</span>` : status !== "todo" && STATUS[status] ? ` <span class="pill s-${status}">${STATUS[status]}</span>` : ""}</h2>
     <form id="nt">
       <label class="field"><span>عنوان المهمة</span><input class="input" name="title" maxlength="200" required></label>
       <label class="field"><span>المشروع</span><select class="input" name="project_id">${projectOptions(state.view.project)}</select></label>
@@ -966,7 +989,8 @@ function openNewTask(status = "todo") {
         deadline: f.get("deadline") || null,
         priority: f.get("priority"),
         project_id: f.get("project_id") || null,
-        status: STATUS[status] && status !== "done" ? status : "todo",
+        status: STATUS[status] ? status : "todo",
+        ...(col && (f.get("project_id") || null) === col.project_id ? { status_id: col.id } : {}),
         created_by: state.me.id,
       }).select().single();
       if (error) throw error;
@@ -1029,6 +1053,76 @@ async function renderFiles(taskId, box) {
 }
 
 /* ---------- Task drawer ---------- */
+/* ---------- @mentions in comments ---------- */
+// people who can open this task: its people, their managers up the chain, and admins
+function mentionCandidates(t) {
+  const ids = new Set([t.created_by, ...t.assignees].filter(Boolean));
+  for (const id of [...ids]) { let p = profile(id); const seen = new Set(); while (p?.manager_id && !seen.has(p.manager_id)) { seen.add(p.manager_id); ids.add(p.manager_id); p = profile(p.manager_id); } }
+  state.profiles.forEach((p) => { if (p.is_admin) ids.add(p.id); });
+  ids.delete(state.me.id);
+  return [...ids].map(profile).filter((p) => p && p.active).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
+}
+function commentHtml(c) {
+  let html = esc(c.body);
+  const names = (c.mentions || []).map(profile).filter(Boolean).sort((a, b) => b.full_name.length - a.full_name.length);
+  for (const p of names) {
+    const tag = "@" + esc(p.full_name);
+    html = html.split(tag).join(`<span class="mention ${p.id === state.me.id ? "me" : ""}" data-pid="${p.id}">${tag}</span>`);
+  }
+  return html;
+}
+function wireMentions(ta, host, people) {
+  const chosen = new Map(); // id -> name
+  const box = document.createElement("div");
+  box.className = "mention-box"; box.hidden = true; box.setAttribute("role", "listbox");
+  host.appendChild(box);
+  let items = [], idx = 0, tokenStart = -1;
+  const close = () => { box.hidden = true; items = []; tokenStart = -1; };
+  const update = () => {
+    const pos = ta.selectionStart, before = ta.value.slice(0, pos);
+    const m = before.match(/(^|\s)@([^\s@]{0,24}(?:\s[^\s@]{0,24})?)$/);
+    if (!m) return close();
+    const q = m[2].trim().toLowerCase();
+    items = people.filter((p) => !q || p.full_name.toLowerCase().split(/\s+/).some((w) => w.startsWith(q)) || p.full_name.toLowerCase().startsWith(q) || (p.username || "").toLowerCase().startsWith(q)).slice(0, 6);
+    if (!items.length) return close();
+    tokenStart = pos - m[2].length - 1;
+    idx = Math.min(idx, items.length - 1);
+    box.innerHTML = `<div class="mb-head">${tx("منشن لحد")}</div>` + items.map((p, i) => `<button type="button" role="option" class="mb-item ${i === idx ? "on" : ""}" data-i="${i}">${avatar(p, "sm")}<span><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></span></button>`).join("");
+    box.hidden = false;
+    $$(".mb-item", box).forEach((b) => b.onmousedown = (e) => { e.preventDefault(); pick(Number(b.dataset.i)); });
+  };
+  const pick = (i) => {
+    const p = items[i]; if (!p || tokenStart < 0) return;
+    const pos = ta.selectionStart, ins = "@" + p.full_name + " ";
+    ta.value = ta.value.slice(0, tokenStart) + ins + ta.value.slice(pos);
+    const caret = tokenStart + ins.length;
+    ta.setSelectionRange(caret, caret);
+    chosen.set(p.id, p.full_name);
+    close(); ta.focus();
+    ta.dispatchEvent(new Event("input"));
+  };
+  ta.addEventListener("input", () => { idx = 0; update(); });
+  ta.addEventListener("click", update);
+  ta.addEventListener("blur", () => setTimeout(close, 150));
+  ta.addEventListener("keydown", (e) => {
+    if (box.hidden) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); idx = (idx + 1) % items.length; update(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); idx = (idx - 1 + items.length) % items.length; update(); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(idx); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
+  });
+  return {
+    ids: (body) => [...chosen].filter(([, name]) => body.includes("@" + name)).map(([id]) => id),
+    reset: () => { chosen.clear(); close(); },
+  };
+}
+
+function statusOptions(pid, selected) {
+  const cols = pid ? projCols(pid) : [];
+  return cols.length
+    ? cols.map((c) => `<option value="${c.id}" ${c.id === selected ? "selected" : ""}>${esc(c.name)}</option>`).join("")
+    : Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${selected === k ? "selected" : ""}>${l}</option>`).join("");
+}
 function openTask(id) {
   const t = state.tasks.find((x) => x.id === id);
   if (!t) return toast("المهمة مش موجودة", true);
@@ -1037,7 +1131,7 @@ function openTask(id) {
   const dropText = tx("اسحب الملفات هنا أو اضغط للاختيار (حتى {mb} ميجا)", { mb: MAX_FILE_MB });
   const ov = openModal(`
     <div class="panel-top">
-      <span class="pill s-${t.status}">${STATUS[t.status]}</span>
+      ${statusPill(t)}
       <button class="icon-btn" data-close aria-label="إغلاق" style="color:var(--ink-2)">${icon("close")}</button>
     </div>
     <form id="td">
@@ -1048,7 +1142,7 @@ function openTask(id) {
         <select class="input" name="project_id" ${manage ? "" : "disabled"}>${projectOptions(t.project_id, { includeArchivedId: t.project_id })}</select></label>
       <div class="row2">
         <label class="field"><span>الحالة</span>
-          <select class="input" name="status" ${work ? "" : "disabled"}>${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <select class="input" name="status" ${work ? "" : "disabled"}>${statusOptions(t.project_id, taskCol(t)?.id || t.status)}</select></label>
         <label class="field"><span>الأولوية</span>
           <select class="input" name="priority" ${manage ? "" : "disabled"}>${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${t.priority === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       </div>
@@ -1066,11 +1160,7 @@ function openTask(id) {
         ${manage ? `<button type="button" class="btn sm" id="edit-as" style="margin-top:10px">${icon("edit", "sm")}تعديل المسؤولين</button><div id="as-edit" hidden style="margin-top:10px">${peoplePicker(t.assignees)}</div>` : ""}
       </div>
 
-      ${work ? `<p class="err" id="td-err" style="margin-top:16px"></p>
-      <div class="modal-foot">
-        ${canDeleteTask(t) ? `<button type="button" class="btn danger ghost" id="del-task">${icon("trash", "sm")}حذف المهمة</button>` : ""}${manage ? `<span class="spacer"></span>` : ""}
-        <button class="btn primary" type="submit">حفظ التغييرات</button>
-      </div>` : ""}
+      ${work ? `<p class="err" id="td-err" style="margin-top:16px"></p>` : ""}
     </form>
 
     <div class="section">
@@ -1100,13 +1190,26 @@ function openTask(id) {
         </form>
       </div>
       <div id="dtab-activity" hidden><div id="a-list" class="timeline"></div></div>
-    </div>`, { drawer: true, label: t.title });
+    </div>
+    ${work || canDeleteTask(t) ? `<div class="drawer-foot">
+      ${canDeleteTask(t) ? `<button type="button" class="btn danger ghost" id="del-task">${icon("trash", "sm")}<span>حذف المهمة</span></button>` : ""}
+      <span class="spacer"></span>
+      ${work ? `<button class="btn primary" type="submit" form="td">${icon("check", "sm")}<span>حفظ التغييرات</span></button>` : ""}
+    </div>` : ""}`, { drawer: true, label: t.title });
 
   $("[data-close]", ov).onclick = closeModal;
   wirePeopleSearch(ov);
   const range = $("input[name=progress]", ov), status = $("select[name=status]", ov);
   range.oninput = () => { $("#pv", ov).textContent = range.value + "%"; };
-  status.onchange = () => { if (status.value === "done") { range.value = 100; $("#pv", ov).textContent = "100%"; } };
+  const kindOf = (v) => colById(v)?.kind || v;
+  status.onchange = () => { if (kindOf(status.value) === "done") { range.value = 100; $("#pv", ov).textContent = "100%"; } };
+  const projSel = $("select[name=project_id]", ov);
+  if (projSel) projSel.onchange = () => {
+    // a different project has different columns: keep the same kind where possible
+    const k = kindOf(status.value), pid = projSel.value || null;
+    const match = pid && projCols(pid).find((c) => c.kind === k);
+    status.innerHTML = statusOptions(pid, match ? match.id : k);
+  };
   const ea = $("#edit-as", ov);
   if (ea) ea.onclick = () => { $("#as-edit", ov).hidden = false; ea.hidden = true; };
 
@@ -1141,7 +1244,8 @@ function openTask(id) {
     e.preventDefault();
     const f = new FormData(e.target);
     const tdErr = (m) => { $("#td-err", ov).textContent = ""; requestAnimationFrame(() => $("#td-err", ov).textContent = m); };
-    const patch = { status: f.get("status") };
+    const sv = String(f.get("status") || "");
+    const patch = colById(sv) ? { status_id: sv } : { status: sv };
     if (!range.disabled) patch.progress = Number(f.get("progress"));
     if (manage) {
       patch.title = String(f.get("title")).trim();
@@ -1164,7 +1268,7 @@ function openTask(id) {
         if (rm.length) { const { error: er } = await sb.from("task_assignees").delete().eq("task_id", t.id).in("user_id", rm); if (er) throw er; }
       }
       await loadTasks(); closeModal(); route();
-      toast(patch.status === "done" && t.status !== "done" ? "برافو! المهمة اكتملت" : "اتحفظت التغييرات");
+      toast(kindOf(sv) === "done" && t.status !== "done" ? "برافو! المهمة اكتملت" : "اتحفظت التغييرات");
     } catch (ex) {
       tdErr(friendly(ex)); btn.disabled = false;
     }
@@ -1395,6 +1499,7 @@ function notifText(n) {
     case "comment": return tx("{actor} علّق على {title}", { actor, title });
     case "completed": return tx("{actor} خلّص مهمة {title}", { actor, title });
     case "due_soon": return tx("موعد تسليم {title} بكرة", { title });
+    case "mention": return tx("{actor} عمل لك منشن في {title}", { actor, title });
     case "absent": return tx("اتسجلت غايب عن استاند أب {day} ({pts} نقاط)", { day: `<b>${esc(n.data?.day ? fmtDayShort(n.data.day) : "")}</b>`, pts: PTS.absent });
     case "thanks": return tx("{actor} اداك {pts} نقطة شكر", { actor, pts: `<b>+${esc(n.data?.points ?? "")}</b>` }) + (n.data?.reason ? ` — ${esc(n.data.reason)}` : "");
     default: return title;
@@ -1572,7 +1677,7 @@ function wireDrawerExtras(t, ov, work) {
       return `<div class="comment ${mine ? "mine" : ""}">${avatar(u, "sm")}
         <div class="c-body"><div class="c-meta"><b>${esc(u?.full_name || "—")}</b><small title="${fmtDateTime(c.created_at)}">${timeAgo(c.created_at)}</small>
           ${mine || state.me.is_admin ? `<button class="c-del" data-cdel="${c.id}" aria-label="حذف التعليق">${icon("trash", "sm")}</button>` : ""}</div>
-          <p>${esc(c.body)}</p></div></div>`;
+          <p>${commentHtml(c)}</p></div></div>`;
     }).join("") : `<p class="meta" style="margin:0 0 12px">مفيش تعليقات لسه. ابدأ النقاش هنا.</p>`;
     cList.scrollTop = cList.scrollHeight;
     $$("[data-cdel]", cList).forEach((b) => b.onclick = async () => {
@@ -1582,17 +1687,18 @@ function wireDrawerExtras(t, ov, work) {
     });
   };
   const cForm = $("#c-form", ov), ta = $("textarea", cForm);
-  ta.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); cForm.requestSubmit(); } };
+  const mention = wireMentions(ta, cForm, mentionCandidates(t));
+  ta.addEventListener("keydown", (e) => { if (e.defaultPrevented) return; if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); cForm.requestSubmit(); } });
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; };
   cForm.onsubmit = async (e) => {
     e.preventDefault();
     const body = ta.value.trim();
     if (!body) return;
     const btn = $("button", cForm); btn.disabled = true;
-    const { error } = await sb.from("task_comments").insert({ task_id: t.id, body, user_id: state.me.id });
+    const { error } = await sb.from("task_comments").insert({ task_id: t.id, body, user_id: state.me.id, mentions: mention.ids(body) });
     btn.disabled = false;
     if (error) return toast(friendly(error), true);
-    ta.value = ""; ta.style.height = "";
+    ta.value = ""; ta.style.height = ""; mention.reset();
     drawerDirty = true;
     loadComments();
   };
@@ -1644,16 +1750,136 @@ function kbCard(t) {
   </article>`;
 }
 const BOARD_COLS = ["todo", "in_progress", "review", "done", "blocked"];
+// on a single project's board the columns are that project's own; otherwise one column per status kind
 function boardHtml(list) {
-  return `<div class="board ${state.animate ? "stagger" : ""}" id="board">${BOARD_COLS.map((k, ci) => {
-    const l = STATUS[k];
-    const items = list.filter((t) => t.status === k);
-    return `<section class="kb-col c-${k}" data-col="${k}" style="--i:${ci}" aria-label="${l}">
-      <header><span class="kb-title"><i class="kb-dot"></i>${l}</span><span class="kb-n">${items.length}</span></header>
-      <div class="kb-drop">${items.map(kbCard).join("")}<div class="kb-empty" ${items.length ? "hidden" : ""}>${tx("اسحب مهمة هنا")}</div></div>
-      ${k !== "done" ? `<button class="kb-add" data-add="${k}">${icon("plus", "sm")}${tx("إضافة مهمة")}</button>` : ""}
-    </section>`;
-  }).join("")}</div>`;
+  const pid = state.view.project && project(state.view.project) ? state.view.project : null;
+  const custom = pid ? projCols(pid) : [];
+  const canCols = !!pid && isManager();
+  const cols = custom.length
+    ? custom.map((c) => ({ key: c.id, name: esc(c.name), color: c.color, kind: c.kind, col: c, items: list.filter((t) => taskCol(t)?.id === c.id) }))
+    : BOARD_COLS.map((k) => ({ key: k, name: STATUS[k], color: null, kind: k, items: list.filter((t) => t.status === k) }));
+  return `<div class="board ${state.animate ? "stagger" : ""} ${custom.length ? "custom" : ""}" id="board" data-mode="${custom.length ? "custom" : "kind"}">${cols.map((c, ci) => `
+    <section class="kb-col c-${c.kind}" data-col="${c.key}" style="--i:${ci};${c.color ? `--tone:${esc(c.color)}` : ""}" aria-label="${c.name}">
+      <header>
+        <span class="kb-title"><i class="kb-dot"></i><span class="kb-name">${c.name}</span><span class="kb-n">${c.items.length}</span></span>
+        <span class="kb-tools">
+          <button class="kb-icon" data-add="${c.key}" title="${tx("إضافة مهمة")}" aria-label="${tx("إضافة مهمة")}">${icon("plus", "sm")}</button>
+          ${canCols ? `<button class="kb-icon" data-colmenu="${c.key}" title="${tx("خيارات العمود")}" aria-label="${tx("خيارات العمود")}">${icon("dots", "sm")}</button>` : ""}
+        </span>
+      </header>
+      <div class="kb-drop">${c.items.map(kbCard).join("")}<div class="kb-empty" ${c.items.length ? "hidden" : ""}>${tx("اسحب مهمة هنا")}</div></div>
+    </section>`).join("")}
+    ${canCols ? `<button class="kb-col-add" id="kb-col-add">${icon("plus")}<span>${tx("إضافة عمود")}</span></button>` : ""}
+  </div>`;
+}
+const COL_COLORS = ["#64748B", "#0B6FC4", "#0E9AA7", "#7A4FD0", "#C2410C", "#D97706", "#17996A", "#D13B47", "#DB2777", "#334155"];
+function openColModal(pid, col = null) {
+  const isNew = !col;
+  const color = col?.color || COL_COLORS[projCols(pid).length % COL_COLORS.length];
+  const ov = openModal(`
+    <h2>${isNew ? tx("عمود جديد") : tx("تعديل العمود")}</h2>
+    <form id="colf">
+      <label class="field"><span>${tx("اسم الحالة")}</span><input class="input" name="name" maxlength="40" required value="${esc(col?.name || "")}" placeholder="${tx("مثلاً: تصميم، اختبار، جاهز للنشر")}"></label>
+      <div class="field"><span>${tx("اللون")}</span>
+        <div class="swatches" role="radiogroup" aria-label="${tx("اللون")}">
+          ${COL_COLORS.map((c) => `<label style="--c:${c}"><input type="radio" name="color" value="${c}" ${c.toLowerCase() === color.toLowerCase() ? "checked" : ""} aria-label="${c}"><span></span></label>`).join("")}
+          <label class="sw-custom" title="${tx("لون تاني")}"><input type="color" name="custom" value="${esc(color)}" aria-label="${tx("لون تاني")}"></label>
+        </div></div>
+      <label class="field"><span>${tx("بتتحسب في التقارير كـ")}</span>
+        <select class="input" name="kind">${BOARD_COLS.map((k) => `<option value="${k}" ${(col?.kind || "in_progress") === k ? "selected" : ""}>${STATUS[k]}</option>`).join("")}</select>
+        <small class="hint">${tx("المهام اللي في عمود من نوع «مكتملة» بتتحسب مخلّصة.")}</small></label>
+      <p class="err" id="colf-err"></p>
+      <div class="modal-foot"><span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>إلغاء</button>
+        <button class="btn primary" type="submit">${isNew ? tx("إضافة العمود") : tx("حفظ")}</button>
+      </div>
+    </form>`, { label: isNew ? tx("عمود جديد") : tx("تعديل العمود") });
+  $("[data-close]", ov).onclick = closeModal;
+  const custom = $("input[name=custom]", ov);
+  custom.oninput = () => $$("input[name=color]", ov).forEach((r) => { r.checked = false; });
+  $$("input[name=color]", ov).forEach((r) => r.onchange = () => { custom.value = r.value; });
+  $("#colf", ov).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const picked = $("input[name=color]:checked", ov)?.value || custom.value;
+    const row = { name: String(f.get("name")).trim(), color: picked, kind: f.get("kind") };
+    if (!row.name) return;
+    const btn = e.submitter; btn.disabled = true;
+    const q = isNew
+      ? sb.from("task_statuses").insert({ ...row, project_id: pid, position: Math.max(-1, ...projCols(pid).map((c) => c.position)) + 1 }).select().single()
+      : sb.from("task_statuses").update(row).eq("id", col.id).select().single();
+    const { data, error } = await q;
+    if (error || !data) { btn.disabled = false; $("#colf-err", ov).textContent = error ? friendly(error) : tx("مش مسموح لك تعدّل الأعمدة"); return; }
+    state.statuses = state.statuses.filter((c) => c.id !== data.id).concat(data);
+    if (!isNew && data.kind !== col.kind) await loadTasks(); // tasks in it changed kind on the server
+    closeModal(); toast(isNew ? tx("اتضاف العمود") : tx("اتحفظ العمود"));
+    state.animate = false; renderTasks(); afterRender();
+  };
+}
+function openColMenu(btn, colId) {
+  $("#col-menu")?.remove();
+  const c = colById(colId); if (!c) return;
+  const cols = projCols(c.project_id), i = cols.findIndex((x) => x.id === c.id);
+  const m = document.createElement("div");
+  m.id = "col-menu"; m.className = "col-menu"; m.setAttribute("role", "menu");
+  const prevLbl = document.dir === "rtl" ? tx("حرّكه يمين") : tx("حرّكه شمال"), nextLbl = document.dir === "rtl" ? tx("حرّكه شمال") : tx("حرّكه يمين");
+  m.innerHTML = `
+    <button role="menuitem" data-cm="edit">${icon("edit", "sm")}${tx("تعديل الاسم واللون")}</button>
+    ${i > 0 ? `<button role="menuitem" data-cm="prev">${icon("chev", "sm")}${prevLbl}</button>` : ""}
+    ${i < cols.length - 1 ? `<button role="menuitem" data-cm="next">${icon("chev", "sm")}${nextLbl}</button>` : ""}
+    ${cols.length > 1 ? `<button role="menuitem" class="danger" data-cm="del">${icon("trash", "sm")}${tx("مسح العمود")}</button>` : ""}`;
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect(), w = m.offsetWidth;
+  m.style.top = `${r.bottom + 6}px`;
+  m.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, document.dir === "rtl" ? r.left : r.right - w))}px`;
+  const close = () => { m.remove(); removeEventListener("pointerdown", outside, true); };
+  const outside = (e) => { if (!m.contains(e.target) && e.target !== btn) close(); };
+  setTimeout(() => addEventListener("pointerdown", outside, true));
+  m.onclick = async (e) => {
+    const a = e.target.closest("[data-cm]")?.dataset.cm; if (!a) return;
+    close();
+    if (a === "edit") return openColModal(c.project_id, c);
+    if (a === "prev" || a === "next") {
+      const other = cols[a === "prev" ? i - 1 : i + 1];
+      const pa = c.position === other.position ? (a === "prev" ? other.position - 1 : other.position + 1) : other.position;
+      const pb = c.position;
+      const [r1, r2] = await Promise.all([
+        sb.from("task_statuses").update({ position: pa }).eq("id", c.id),
+        sb.from("task_statuses").update({ position: pb }).eq("id", other.id),
+      ]);
+      if (r1.error || r2.error) return toast(friendly(r1.error || r2.error), true);
+      c.position = pa; other.position = pb;
+      state.animate = false; renderTasks(); afterRender();
+      return;
+    }
+    if (a === "del") openColDelete(c);
+  };
+}
+function openColDelete(c) {
+  const others = projCols(c.project_id).filter((x) => x.id !== c.id);
+  const n = state.tasks.filter((t) => taskCol(t)?.id === c.id).length;
+  const ov = openModal(`
+    <h2>${tx("مسح عمود «{name}»؟", { name: esc(c.name) })}</h2>
+    <form id="cdel">
+      ${n ? `<label class="field"><span>${tx("فيه {n} مهمة — تتنقل لعمود:", { n })}</span>
+        <select class="input" name="to">${others.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label>`
+        : `<p class="meta">${tx("العمود فاضي، مفيش مهام هتتأثر.")}</p><input type="hidden" name="to" value="${others[0].id}">`}
+      <p class="err" id="cdel-err"></p>
+      <div class="modal-foot"><span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>إلغاء</button>
+        <button class="btn btn-danger" type="submit">${icon("trash", "sm")}${tx("مسح العمود")}</button>
+      </div>
+    </form>`, { label: tx("مسح العمود") });
+  $("[data-close]", ov).onclick = closeModal;
+  $("#cdel", ov).onsubmit = async (e) => {
+    e.preventDefault();
+    const to = new FormData(e.target).get("to");
+    const { error } = await sb.rpc("delete_task_status", { p_id: c.id, p_move_to: to });
+    if (error) { $("#cdel-err", ov).textContent = friendly(error); return; }
+    await Promise.all([loadStatuses(), loadTasks()]);
+    closeModal(); toast(tx("اتمسح العمود"));
+    state.animate = false; renderTasks(); afterRender();
+  };
 }
 function sizeBoard() {
   const b = $("#board"); if (!b) return;
@@ -1666,7 +1892,10 @@ document.addEventListener("touchmove", (e) => { if (boardDrag?.active) e.prevent
 function wireBoard() {
   sizeBoard();
   const board = $("#board"); if (!board) return;
-  $$("[data-add]", board).forEach((b) => b.onclick = () => openNewTask(b.dataset.add));
+  const customBoard = board.dataset.mode === "custom";
+  $$("[data-add]", board).forEach((b) => b.onclick = () => customBoard ? openNewTask(colById(b.dataset.add)?.kind || "todo", b.dataset.add) : openNewTask(b.dataset.add));
+  $$("[data-colmenu]", board).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openColMenu(b, b.dataset.colmenu); });
+  const addCol = $("#kb-col-add", board); if (addCol) addCol.onclick = () => openColModal(state.view.project);
   $$(".kb-card", board).forEach((c) => {
     c.onclick = () => { if (Date.now() - boardJustDragged < 350) return; openTask(c.dataset.id); };
     c.onkeydown = (e) => { if (e.key === "Enter") openTask(c.dataset.id); };
@@ -1707,7 +1936,7 @@ function wireBoard() {
         cleanup();
         if (!wasActive) return;
         boardJustDragged = Date.now();
-        if (target && target !== d.from) moveTask(d.id, target);
+        if (target && target !== d.from) (board.dataset.mode === "custom" ? moveTaskToCol(d.id, target) : moveTask(d.id, target));
         else { renderTasks(); afterRender(); }
       };
       function cleanup() {
@@ -1761,12 +1990,28 @@ async function moveTask(id, status) {
   if (!canWorkOn(t)) return toast("مش مسموح لك تعمل الخطوة دي", true);
   const prev = { status: t.status, progress: t.progress, completed_at: t.completed_at };
   t.status = status;
+  const sameKind = t.project_id && projCols(t.project_id).find((c) => c.kind === status);
+  if (sameKind) t.status_id = sameKind.id;
   if (status === "done") { t.progress = 100; t.completed_at = new Date().toISOString(); } else t.completed_at = null;
   renderTasks(); afterRender();
   $(`.kb-card[data-id="${id}"]`)?.classList.add("landed");
   const { error } = await sb.from("tasks").update({ status }).eq("id", id);
   if (error) { Object.assign(t, prev); renderTasks(); afterRender(); return toast(friendly(error), true); }
   if (status === "done") toast("برافو! المهمة اكتملت");
+}
+
+async function moveTaskToCol(id, colId) {
+  const t = state.tasks.find((x) => x.id === id), c = colById(colId);
+  if (!t || !c || t.status_id === colId) return;
+  if (!canWorkOn(t)) return toast("مش مسموح لك تعمل الخطوة دي", true);
+  const prev = { status: t.status, status_id: t.status_id, progress: t.progress, completed_at: t.completed_at };
+  t.status_id = c.id; t.status = c.kind;
+  if (c.kind === "done") { t.progress = 100; t.completed_at = new Date().toISOString(); } else t.completed_at = null;
+  renderTasks(); afterRender();
+  $(`.kb-card[data-id="${id}"]`)?.classList.add("landed");
+  const { error } = await sb.from("tasks").update({ status_id: c.id }).eq("id", id);
+  if (error) { Object.assign(t, prev); renderTasks(); afterRender(); return toast(friendly(error), true); }
+  if (c.kind === "done" && prev.status !== "done") toast("برافو! المهمة اكتملت");
 }
 
 /* =====================================================================
@@ -1841,7 +2086,7 @@ function renderHome() {
           <h3>${icon("tasks", "sm")}مهامك الجاية</h3>
           ${nextUp.length ? `<div class="next-list">${nextUp.map((t) => `
             <button class="next-item" data-open="${t.id}">
-              <span class="pill s-${t.status}">${STATUS[t.status]}</span>
+              ${statusPill(t)}
               <b>${esc(t.title)}</b>${deadlineCell(t)}
             </button>`).join("")}</div>
             <a class="see-all" href="#/tasks">كل مهامك</a>`

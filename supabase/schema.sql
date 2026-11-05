@@ -342,3 +342,7 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- v11/v12 (migrations "v11_realtime_standup_settings", "v12a..v12e"): standup_settings added to realtime;
 -- Web Push: push_subscriptions table (own rows only), pg_net, private.app_config (push secret + VAPID keys),
 -- send_push() -> edge function "push-send"; triggers push on new chat messages and on every notification.
+-- v13 (migrations "v13_project_columns_mentions", "v13b_push_mention_text", "v13c_status_sync_fix"):
+-- per-project board columns: task_statuses (project_id, name, color, kind, position), seeded with 5 defaults per project;
+-- tasks.status_id kept in sync with tasks.status (kind) by trigger tasks_a_status_sync; managers edit columns,
+-- delete via delete_task_status(id, move_to). Comments get mentions uuid[] -> 'mention' notifications (+ push).
