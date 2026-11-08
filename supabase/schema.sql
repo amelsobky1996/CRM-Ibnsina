@@ -349,3 +349,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- v14 (migration "v14_group_chat"): chat_groups, chat_group_members (owner/member, last_read_at, cleared_at), group_messages;
 -- members-only RLS; RPCs create_chat_group, update_chat_group, add_group_members, remove_group_member, set_group_owner,
 -- delete_chat_group, mark_group_read, delete_group_message; realtime + push to members on new group messages.
+
+-- v15 weekly report: public.weekly_updates (project_id, week_start [Monday], user_id, highs, lows, sprint, bugs)
+--   unique (project_id, week_start, user_id); everyone reads, each user writes only their own rows; admin may delete.

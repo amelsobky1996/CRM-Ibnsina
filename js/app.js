@@ -163,6 +163,7 @@ const state = {
   teamDirectOnly: false,
   notifs: [],
   msgs: [],
+  wu: { week: null, project: null, tab: null, rows: null, loadedWeek: null, drafts: {}, fileProjects: null },
   groups: [],
   gmsgs: [],
   statuses: [],
@@ -459,6 +460,9 @@ function subscribe() {
       for (const table of ["attendance_sessions", "points_awards", "attendance_takers", "standup_settings"])
         ch.on("postgres_changes", { event: "*", schema: "public", table }, attReload);
     }],
+    ["weekly", (ch) => {
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "weekly_updates" }, () => debounced(weeklyRefresh, 600));
+    }],
   ];
   RT_FEEDS.forEach(([n, bind]) => rtChannel(n, bind));
   channel = chans[0];
@@ -559,7 +563,7 @@ function renderNav() {
   if (!$("#nav")) return;
   const r = currentRoute();
   const myOpen = state.tasks.filter((t) => t.assignees.includes(state.me.id) && t.status !== "done").length;
-  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["chat", "المحادثات", "chat", "chat"], ["projects", "المشاريع", "projects"], ["attendance", "الحضور والنقاط", "trophy"]];
+  const items = [["home", "الرئيسية", "home"], ["tasks", "المهام", "tasks", myOpen], ["chat", "المحادثات", "chat", "chat"], ["projects", "المشاريع", "projects"], ["weekly", "التقرير الأسبوعي", "report"], ["attendance", "الحضور والنقاط", "trophy"]];
   if (isManager()) items.push(["reports", "التقارير", "report"]);
   if (isManager()) items.push(["team", "أداء الفريق", "team"]);
   items.push(["org", "الهيكل التنظيمي", "org"]);
@@ -663,6 +667,7 @@ function route() {
   if (page === "settings") renderSettings();
   else if (page === "chat") renderChat();
   else if (page === "attendance") renderAttendance();
+  else if (page === "weekly") renderWeekly();
   else if (page === "home") renderHome();
   else if (page === "reports" && isManager()) renderReports();
   else if (page === "projects") renderProjects();
@@ -3646,6 +3651,178 @@ async function groupMetaReload() {
       }
       renderChatBadges();
     } catch (e) { console.error(e); }
+}
+
+/* =====================================================================
+   Weekly report: everyone writes Highs / Lows / Sprint / Bugs per project,
+   the system compiles one downloadable file. Weeks run Monday -> Monday.
+   ===================================================================== */
+const WU_FIELDS = [
+  ["highs", "Highs", "إيه اللي مشي كويس الأسبوع ده؟"],
+  ["lows", "Lows", "إيه المشاكل أو اللي اتأخر؟"],
+  ["sprint", "Sprint Updates", "التقدم في السبرنت والمهام اللي اتعملت"],
+  ["bugs", "Bugs Updates", "البجز اللي اتحلت أو اللي لسه مفتوحة"],
+];
+function mondayOf(dateStr) { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); }
+const addDays = (dateStr, n) => { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + n); return ymd(d); };
+const weekLabel = (ws) => tx("من الاتنين {a} لـ الاتنين {b}", { a: fmtDM(ws), b: fmtDM(addDays(ws, 7)) });
+function weekOptions(selected) {
+  const cur = mondayOf(cairoToday()), out = [];
+  for (let i = 0; i < 16; i++) { const w = addDays(cur, -7 * i); out.push(`<option value="${w}" ${w === selected ? "selected" : ""}>${weekLabel(w)}${i === 0 ? " · " + tx("الحالي") : i === 1 ? " · " + tx("اللي فات") : ""}</option>`); }
+  return out.join("");
+}
+async function loadWeekly(week) {
+  const { data, error } = await sb.from("weekly_updates").select("*").eq("week_start", week);
+  if (error) throw error;
+  state.wu.rows = data || []; state.wu.loadedWeek = week;
+}
+
+async function weeklyRefresh() {
+  state.wu.loadedWeek = null;
+  // don't wipe a form someone is typing in; the compiled view refreshes live
+  if (currentRoute().page === "weekly" && state.wu.tab === "file") renderWeekly();
+}
+async function renderWeekly() {
+  const W = state.wu;
+  W.week ||= mondayOf(cairoToday());
+  W.tab ||= "write";
+  const projects = state.projects.filter((p) => p.status !== "archived").sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  if (!W.project || !projects.some((p) => p.id === W.project)) W.project = projects[0]?.id || null;
+  $("#view").innerHTML = `
+    <div class="page-head"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين.")}</p></div></div>
+    <div class="wu-bar">
+      <label class="field"><span>${tx("الأسبوع")}</span><select class="input" id="wu-week">${weekOptions(W.week)}</select></label>
+      <div class="tabs" role="tablist"><span class="pill-bg"></span>
+        <button class="tab ${W.tab === "write" ? "on" : ""}" data-wtab="write">${icon("edit", "sm")}${tx("تحديثاتي")}</button>
+        <button class="tab ${W.tab === "file" ? "on" : ""}" data-wtab="file">${icon("report", "sm")}${tx("الملف المجمّع")}</button>
+      </div>
+    </div>
+    <div id="wu-body"><div class="lb-skel">${"<i></i>".repeat(4)}</div></div>`;
+  placeTabPill($("#view"));
+  $("#wu-week").onchange = (e) => { W.week = e.target.value; renderWeekly(); };
+  $$("[data-wtab]").forEach((b) => b.onclick = () => { W.tab = b.dataset.wtab; renderWeekly(); });
+  try { await loadWeekly(W.week); } catch (e) { $("#wu-body").innerHTML = `<div class="empty"><b>${esc(friendly(e))}</b></div>`; return; }
+  if (currentRoute().page !== "weekly") return;
+  if (!projects.length) { $("#wu-body").innerHTML = `<div class="empty"><div class="ill">${icon("projects")}</div><b>${tx("مفيش مشاريع لسه")}</b>${tx("اعمل مشروع الأول من صفحة المشاريع.")}</div>`; return; }
+  (W.tab === "write" ? weeklyWrite : weeklyFile)(projects);
+}
+
+function weeklyWrite(projects) {
+  const W = state.wu, me = state.me.id;
+  const mine = W.rows.filter((r) => r.user_id === me);
+  const row = mine.find((r) => r.project_id === W.project) || {};
+  const draftKey = `${W.project}|${W.week}`;
+  const draft = W.drafts[draftKey] || {};
+  const val = (k) => draft[k] ?? row[k] ?? "";
+  $("#wu-body").innerHTML = `
+    <div class="wu-grid">
+      <aside class="wu-projects card-box">
+        <h3>${icon("projects", "sm")}${tx("المشروع")}</h3>
+        ${projects.map((p) => { const done = mine.some((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => r[k].trim())); return `<button class="wu-proj ${p.id === W.project ? "on" : ""}" data-wproj="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}"><i></i><span>${esc(p.name)}</span>${done ? `<em title="${tx("اتكتب")}">${icon("check", "sm")}</em>` : ""}</button>`; }).join("")}
+      </aside>
+      <form class="card-box wu-form" id="wu-form">
+        <div class="wu-form-head"><div><h3>${esc(project(W.project)?.name || "")}</h3><small>${weekLabel(W.week)}</small></div>
+          ${row.updated_at ? `<span class="wu-st ok">${tx("اتحفظ {t}", { t: timeAgo(row.updated_at) })}</span>` : `<span class="wu-st no">${tx("لسه ماتكتبش")}</span>`}</div>
+        ${WU_FIELDS.map(([k, label, hint]) => `
+          <label class="field wu-field f-${k}"><span><b class="wu-tag">${label}</b> ${tx(hint)}</span>
+            <textarea class="input" name="${k}" rows="4" maxlength="5000" placeholder="${tx("كل نقطة في سطر لوحدها")}">${esc(val(k))}</textarea></label>`).join("")}
+        <p class="err" id="wu-err"></p>
+        <div class="modal-foot">
+          ${row.id ? `<button type="button" class="btn danger ghost" id="wu-del">${icon("trash", "sm")}${tx("مسح تحديثاتي للمشروع ده")}</button>` : ""}
+          <span class="spacer"></span>
+          <button class="btn primary" type="submit">${icon("check", "sm")}${row.id ? tx("حفظ التعديل") : tx("حفظ التحديثات")}</button>
+        </div>
+      </form>
+    </div>`;
+  $$("[data-wproj]").forEach((b) => b.onclick = () => { W.project = b.dataset.wproj; weeklyWrite(projects); });
+  const form = $("#wu-form");
+  form.oninput = () => { W.drafts[draftKey] = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value])); };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const vals = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value.trim()]));
+    if (!Object.values(vals).some(Boolean)) { $("#wu-err").textContent = tx("اكتب في خانة واحدة على الأقل"); return; }
+    const btn = e.submitter; btn.disabled = true;
+    const { error } = await sb.from("weekly_updates").upsert({ project_id: W.project, week_start: W.week, user_id: me, ...vals }, { onConflict: "project_id,week_start,user_id" });
+    btn.disabled = false;
+    if (error) { $("#wu-err").textContent = friendly(error); return; }
+    delete W.drafts[draftKey];
+    await loadWeekly(W.week);
+    toast(tx("اتحفظت تحديثات {p}", { p: project(W.project)?.name || "" }));
+    weeklyWrite(projects);
+  };
+  const del = $("#wu-del");
+  if (del) del.onclick = async () => {
+    const ok = await confirmDialog({ title: tx("تمسح تحديثاتك للمشروع ده؟"), ok: "مسح" }); if (!ok) return;
+    const { error } = await sb.from("weekly_updates").delete().eq("id", row.id);
+    if (error) return toast(friendly(error), true);
+    delete W.drafts[draftKey]; await loadWeekly(W.week); weeklyWrite(projects);
+  };
+}
+
+const wuLines = (text) => text.split(/\n+/).map((l) => l.replace(/^\s*[-•*·]\s*/, "").trim()).filter(Boolean);
+function weeklyCompiled(projects) {
+  const W = state.wu;
+  return projects.map((p) => {
+    const rows = W.rows.filter((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => r[k].trim()))
+      .sort((a, b) => (profile(a.user_id)?.full_name || "").localeCompare(profile(b.user_id)?.full_name || "", "ar"));
+    const sections = WU_FIELDS.map(([k, label]) => ({ k, label, items: rows.flatMap((r) => wuLines(r[k]).map((t) => ({ t, who: profile(r.user_id)?.full_name || "" }))) }));
+    return { p, rows, sections };
+  }).filter((x) => x.rows.length);
+}
+
+function weeklyFile(projects) {
+  const W = state.wu;
+  W.fileProjects ||= "all";
+  const data = weeklyCompiled(projects).filter((x) => W.fileProjects === "all" || x.p.id === W.fileProjects);
+  const contributors = new Set(W.rows.map((r) => r.user_id));
+  $("#wu-body").innerHTML = `
+    <div class="wu-file-bar">
+      <label class="field" style="margin:0"><span>${tx("المشاريع")}</span><select class="input" id="wu-fp"><option value="all">${tx("كل المشاريع")}</option>${projects.map((p) => `<option value="${p.id}" ${W.fileProjects === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+      <span class="meta" style="margin:0">${tx("{n} شاركوا في الأسبوع ده", { n: contributors.size })}</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="wu-doc" ${data.length ? "" : "disabled"}>${icon("download", "sm")}${tx("تحميل Word")}</button>
+      <button class="btn primary" id="wu-pdf" ${data.length ? "" : "disabled"}>${icon("printer", "sm")}${tx("تحميل PDF")}</button>
+    </div>
+    ${data.length ? `<div class="card-box wu-preview">${weeklyDocHtml(data, false)}</div>`
+      : `<div class="empty"><div class="ill">${icon("report")}</div><b>${tx("لسه محدش كتب تحديثات للأسبوع ده")}</b>${tx("أول ما حد يكتب من تبويب «تحديثاتي» هتظهر هنا.")}</div>`}`;
+  $("#wu-fp").onchange = (e) => { W.fileProjects = e.target.value; weeklyFile(projects); };
+  const fname = `Weekly-Report-${W.week}`;
+  $("#wu-pdf").onclick = () => printDoc(weeklyDocHtml(data, true), fname);
+  $("#wu-doc").onclick = () => downloadWord(weeklyDocHtml(data, true, true), fname);
+}
+
+// one document: project name, then its 4 sections with everyone's points
+function weeklyDocHtml(data, forFile, word = false) {
+  const head = `<div class="pd-head">${word ? "" : `<img src="assets/logo-white.png" alt="">`}<div><b>${tx("التقرير الأسبوعي")}</b><span>${weekLabel(state.wu.week)}</span></div>${forFile ? `<small>${tx("اتطبع {date}", { date: new Date().toLocaleString(LOCALE(), { dateStyle: "medium", timeStyle: "short" }) })}</small>` : ""}</div>`;
+  return (forFile ? head : "") + data.map(({ p, rows, sections }) => `
+    <section class="wu-proj-sec">
+      <h2 class="wu-ph" style="--c:${esc(p.color || "#0B6FC4")}">${esc(p.name)}<small>${tx("{n} شاركوا", { n: rows.length })}</small></h2>
+      ${sections.map((s) => `
+        <div class="wu-sec s-${s.k}">
+          <h4>${s.label}</h4>
+          ${s.items.length ? `<ul>${s.items.map((i) => `<li><span dir="auto">${esc(i.t)}</span> <em>— ${esc(i.who)}</em></li>`).join("")}</ul>` : `<p class="wu-none">—</p>`}
+        </div>`).join("")}
+    </section>`).join("");
+}
+
+function downloadWord(bodyHtml, name) {
+  const rtl = document.documentElement.dir === "rtl";
+  const html = `<!DOCTYPE html><html dir="${rtl ? "rtl" : "ltr"}" lang="${LANG}"><head><meta charset="utf-8"><title>${esc(name)}</title>
+  <style>
+    body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#142037;font-size:11pt;direction:${rtl ? "rtl" : "ltr"}}
+    .pd-head{background:#0472C4;color:#fff;padding:12pt 14pt;margin-bottom:10pt}
+    .pd-head b{display:block;font-size:16pt}.pd-head span,.pd-head small{font-size:10pt}
+    h2{font-size:15pt;color:#0B3B66;border-bottom:2pt solid #0472C4;padding-bottom:3pt;margin:18pt 0 6pt}
+    h2 small{font-size:9pt;color:#6B7A93;font-weight:normal;margin:0 8pt}
+    h4{font-size:12pt;margin:10pt 0 3pt;color:#0472C4}
+    ul{margin:0 0 4pt;padding-${rtl ? "right" : "left"}:18pt} li{margin:2pt 0} em{color:#6B7A93;font-style:normal;font-size:9.5pt}
+    .s-highs h4{color:#128257}.s-lows h4{color:#C9303B}.s-sprint h4{color:#0472C4}.s-bugs h4{color:#B45309}
+  </style></head><body>${bodyHtml}</body></html>`;
+  const blob = new Blob(["﻿", html], { type: "application/msword" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name + ".doc";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
 function renderSettings() {
