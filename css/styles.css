@@ -1504,3 +1504,36 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .mb-item.on, .mb-item:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .mention { color: var(--brand); font-weight: 700; background: color-mix(in srgb, var(--brand) 10%, transparent); border-radius: 6px; padding: 0 3px; unicode-bidi: isolate; }
 .mention.me { background: color-mix(in srgb, #E0A100 22%, transparent); color: #9A6C00; }
+
+/* ======================== Group chats ======================== */
+.g-av { position: relative; color: #fff; border-radius: 30%; }
+.g-av .i { display: none; }
+.g-av b { font-size: calc(var(--s) * .36); font-weight: 800; letter-spacing: .02em; }
+.g-av::after { content: ""; position: absolute; inset-inline-end: -2px; bottom: -2px; width: calc(var(--s) * .36); height: calc(var(--s) * .36); border-radius: 50%; background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='9' cy='8' r='3.2'/%3E%3Cpath d='M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5'/%3E%3Cpath d='M16 4.5a3.2 3.2 0 0 1 0 6.3M21 19c0-2.6-1.6-4.5-4-5.2'/%3E%3C/svg%3E") center / 72% no-repeat; box-shadow: 0 0 0 2px var(--card); }
+.conv .g-av { --s: 44px; }
+.thread-head .g-av { --s: 42px; }
+.thread-empty .g-av { --s: 72px; }
+.chat-list-top { display: flex; align-items: center; gap: 8px; margin: 14px 14px 8px; }
+.chat-list-top .chat-search { margin: 0; flex: 1; min-width: 0; }
+.new-group { flex: none; white-space: nowrap; }
+@media (max-width: 1200px) and (min-width: 961px) { .new-group span { display: none; } .new-group { padding: 0 10px; } }
+.g-who { border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: start; cursor: pointer; min-width: 0; }
+.g-who:hover b { text-decoration: underline; }
+.g-who small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52vw; }
+.g-sender { display: flex; align-items: center; gap: 6px; margin: 2px 4px 3px; font-size: 12.5px; }
+.g-sender .av { --s: 20px; font-size: 9px; }
+.g-sender b { font-weight: 700; }
+.g-top { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 16px; }
+.g-top .g-av { --s: 56px; }
+.gm-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; border: 1px solid var(--line-2); border-radius: 12px; padding: 6px; }
+.gm-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 10px; }
+.gm-row:hover { background: var(--bg); }
+.gm-row .person { flex: 1; min-width: 0; }
+.gm-row .person b small { color: var(--ink-3); font-weight: 500; }
+.gm-acts { display: inline-flex; align-items: center; gap: 4px; }
+.gm-acts .icon-btn { width: 32px; height: 32px; color: var(--ink-3); }
+.gm-acts .icon-btn:hover { color: var(--danger); }
+.g-foot { flex-wrap: wrap; }
+@media (max-width: 640px) { .g-foot .spacer { flex-basis: 100%; height: 0; } }
+.bubble .meta { margin: 3px 0 0; }
+.gm-row .person b .me-tag { color: var(--ink-3); font-weight: 500; font-size: 12px; }

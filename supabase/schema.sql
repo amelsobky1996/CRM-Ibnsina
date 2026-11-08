@@ -346,3 +346,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- per-project board columns: task_statuses (project_id, name, color, kind, position), seeded with 5 defaults per project;
 -- tasks.status_id kept in sync with tasks.status (kind) by trigger tasks_a_status_sync; managers edit columns,
 -- delete via delete_task_status(id, move_to). Comments get mentions uuid[] -> 'mention' notifications (+ push).
+-- v14 (migration "v14_group_chat"): chat_groups, chat_group_members (owner/member, last_read_at, cleared_at), group_messages;
+-- members-only RLS; RPCs create_chat_group, update_chat_group, add_group_members, remove_group_member, set_group_owner,
+-- delete_chat_group, mark_group_read, delete_group_message; realtime + push to members on new group messages.
