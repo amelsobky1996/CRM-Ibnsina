@@ -462,6 +462,7 @@ function subscribe() {
     }],
     ["weekly", (ch) => {
       ch.on("postgres_changes", { event: "*", schema: "public", table: "weekly_updates" }, () => debounced(weeklyRefresh, 600));
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "report_periods" }, () => debounced(periodsRefresh, 400));
     }],
   ];
   RT_FEEDS.forEach(([n, bind]) => rtChannel(n, bind));
@@ -3665,11 +3666,46 @@ const WU_FIELDS = [
 ];
 function mondayOf(dateStr) { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); }
 const addDays = (dateStr, n) => { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + n); return ymd(d); };
-const weekLabel = (ws) => tx("من الاتنين {a} لـ الاتنين {b}", { a: fmtDM(ws), b: fmtDM(addDays(ws, 7)) });
+// Report periods: standard Monday -> Monday weeks, unless an admin defined a custom period
+// covering those days (then the custom one replaces the overlapping weeks).
+async function loadPeriods() {
+  const { data, error } = await sb.from("report_periods").select("*").order("start_date", { ascending: false });
+  if (error) throw error;
+  state.wu.periods = data || [];
+}
+function periodList() {
+  const custom = (state.wu.periods || []).map((p) => ({ start: p.start_date, end: p.end_date, name: p.name, custom: true, incl: true, id: p.id }));
+  const cur = mondayOf(cairoToday()), out = [...custom];
+  const taken = (day) => custom.some((c) => c.start <= day && day <= c.end);
+  for (let i = 0; i < 16; i++) {
+    const st = addDays(cur, -7 * i), days = Array.from({ length: 7 }, (_, k) => addDays(st, k));
+    if (!days.some(taken)) { out.push({ start: st, end: addDays(st, 7), name: "", custom: false, incl: false }); continue; }
+    // a custom period cuts into this week: keep the leftover days (3+ in a row) as their own period
+    let seg = [];
+    for (const d of [...days, null]) {
+      if (d && !taken(d)) { seg.push(d); continue; }
+      if (seg.length >= 3) out.push({ start: seg[0], end: seg[seg.length - 1], name: "", custom: false, incl: true });
+      seg = [];
+    }
+  }
+  return out.sort((a, b) => b.start.localeCompare(a.start));
+}
+const periodOf = (st) => periodList().find((p) => p.start === st) || { start: st, end: addDays(st, 7), custom: false, incl: false };
+const inPeriod = (p, day) => p.start <= day && (p.incl ? day <= p.end : day < p.end);
+function currentPeriod() { const t = cairoToday(); return periodList().find((p) => inPeriod(p, t)) || periodOf(mondayOf(t)); }
+const periodRange = (p) => p.incl ? tx("من {a} لـ {b}", { a: fmtDM(p.start), b: fmtDM(p.end) }) : tx("من الاتنين {a} لـ الاتنين {b}", { a: fmtDM(p.start), b: fmtDM(p.end) });
+const periodLabel = (p) => (p.custom && p.name ? p.name + " · " : "") + periodRange(p);
+const weekLabel = (st) => periodLabel(periodOf(st));
 function weekOptions(selected) {
-  const cur = mondayOf(cairoToday()), out = [];
-  for (let i = 0; i < 16; i++) { const w = addDays(cur, -7 * i); out.push(`<option value="${w}" ${w === selected ? "selected" : ""}>${weekLabel(w)}${i === 0 ? " · " + tx("الحالي") : i === 1 ? " · " + tx("اللي فات") : ""}</option>`); }
-  return out.join("");
+  const t = cairoToday(), cur = currentPeriod();
+  let seenCur = false;
+  return periodList().filter((p) => p.start <= t || p.custom).map((p) => {
+    let tag = "";
+    if (p.start === cur.start) { tag = " · " + tx("الحالي"); seenCur = true; }
+    else if (p.start > t) tag = " · " + tx("جاية");
+    else if (seenCur) { tag = " · " + tx("اللي فات"); seenCur = false; }
+    return `<option value="${p.start}" ${p.start === selected ? "selected" : ""}>${esc(periodLabel(p))}${tag}</option>`;
+  }).join("");
 }
 async function loadWeekly(week) {
   const { data, error } = await sb.from("weekly_updates").select("*").eq("week_start", week);
@@ -3679,32 +3715,112 @@ async function loadWeekly(week) {
 
 async function weeklyRefresh() {
   state.wu.loadedWeek = null;
-  // don't wipe a form someone is typing in; the compiled view refreshes live
-  if (currentRoute().page === "weekly" && state.wu.tab === "file") renderWeekly();
+  // don't wipe a form someone is typing in; the compiled view and the periods list refresh live
+  if (currentRoute().page === "weekly" && state.wu.tab !== "write") renderWeekly();
+}
+async function periodsRefresh() {
+  state.wu.periods = null;
+  if (currentRoute().page === "weekly" && state.wu.tab !== "write") renderWeekly();
 }
 async function renderWeekly() {
   const W = state.wu;
-  W.week ||= mondayOf(cairoToday());
+  if (!W.periods) { try { await loadPeriods(); } catch { W.periods = []; } if (currentRoute().page !== "weekly") return; }
+  if (!W.week || !periodList().some((p) => p.start === W.week)) W.week = currentPeriod().start;
   W.tab ||= "write";
+  if (W.tab === "periods" && !state.me.is_admin) W.tab = "write";
   const projects = state.projects.filter((p) => p.status !== "archived").sort((a, b) => a.name.localeCompare(b.name, "ar"));
   if (!W.project || !projects.some((p) => p.id === W.project)) W.project = projects[0]?.id || null;
   $("#view").innerHTML = `
-    <div class="page-head"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين.")}</p></div></div>
+    <div class="page-head"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين، إلا لو الأدمن حدد فترة تانية.")}</p></div></div>
     <div class="wu-bar">
-      <label class="field"><span>${tx("الأسبوع")}</span><select class="input" id="wu-week">${weekOptions(W.week)}</select></label>
+      <label class="field"><span>${tx("الفترة")}</span><select class="input" id="wu-week">${weekOptions(W.week)}</select></label>
       <div class="tabs" role="tablist"><span class="pill-bg"></span>
         <button class="tab ${W.tab === "write" ? "on" : ""}" data-wtab="write">${icon("edit", "sm")}${tx("تحديثاتي")}</button>
         <button class="tab ${W.tab === "file" ? "on" : ""}" data-wtab="file">${icon("report", "sm")}${tx("الملف المجمّع")}</button>
+        ${state.me.is_admin ? `<button class="tab ${W.tab === "periods" ? "on" : ""}" data-wtab="periods">${icon("calendar", "sm")}${tx("الفترات")}</button>` : ""}
       </div>
     </div>
     <div id="wu-body"><div class="lb-skel">${"<i></i>".repeat(4)}</div></div>`;
   placeTabPill($("#view"));
   $("#wu-week").onchange = (e) => { W.week = e.target.value; renderWeekly(); };
   $$("[data-wtab]").forEach((b) => b.onclick = () => { W.tab = b.dataset.wtab; renderWeekly(); });
+  if (W.tab === "periods") return weeklyPeriods();
   try { await loadWeekly(W.week); } catch (e) { $("#wu-body").innerHTML = `<div class="empty"><b>${esc(friendly(e))}</b></div>`; return; }
   if (currentRoute().page !== "weekly") return;
   if (!projects.length) { $("#wu-body").innerHTML = `<div class="empty"><div class="ill">${icon("projects")}</div><b>${tx("مفيش مشاريع لسه")}</b>${tx("اعمل مشروع الأول من صفحة المشاريع.")}</div>`; return; }
   (W.tab === "write" ? weeklyWrite : weeklyFile)(projects);
+}
+
+// Admin: custom report periods (e.g. a sprint, or a week that starts another day)
+function weeklyPeriods() {
+  const W = state.wu, t = cairoToday();
+  const list = W.periods || [];
+  $("#wu-body").innerHTML = `
+    <div class="card-box">
+      <div class="wu-form-head"><div><h3>${icon("calendar", "sm")}${tx("فترات التقرير")}</h3>
+        <small>${tx("الافتراضي إن التقرير أسبوعي من الاتنين للاتنين. لو عايز تغيّر التوقيت (سبرنت أسبوعين مثلاً، أو أسبوع بيبدأ يوم تاني) حدد الفترة هنا وهتحل محل الأسابيع اللي بتتقاطع معاها.")}</small></div>
+        <button class="btn primary" id="rp-new">${icon("plus", "sm")}${tx("فترة جديدة")}</button></div>
+      ${list.length ? `<div class="rp-list">${list.map((p) => {
+        const P = { start: p.start_date, end: p.end_date, name: p.name, custom: true, incl: true };
+        const st = inPeriod(P, t) ? ["ok", tx("الحالية")] : p.start_date > t ? ["soon", tx("جاية")] : ["no", tx("خلصت")];
+        return `<div class="rp-row">
+          <div class="rp-main"><b>${esc(p.name || tx("فترة بدون اسم"))}</b><span>${periodRange(P)} · ${tx("{n} يوم", { n: Math.round((new Date(p.end_date) - new Date(p.start_date)) / 864e5) + 1 })}</span></div>
+          <span class="wu-st ${st[0]}">${st[1]}</span>
+          <button class="icon-btn" data-rp-edit="${p.id}" title="${tx("تعديل")}" aria-label="${tx("تعديل")}">${icon("edit", "sm")}</button>
+          <button class="icon-btn" data-rp-del="${p.id}" title="${tx("مسح")}" aria-label="${tx("مسح")}">${icon("trash", "sm")}</button>
+        </div>`; }).join("")}</div>`
+      : `<div class="empty" style="padding:28px 10px"><div class="ill">${icon("calendar")}</div><b>${tx("مفيش فترات مخصّصة")}</b>${tx("التقرير ماشي بالأسبوع العادي من الاتنين للاتنين.")}</div>`}
+    </div>`;
+  $("#rp-new").onclick = () => openPeriodModal();
+  $$("[data-rp-edit]").forEach((b) => b.onclick = () => openPeriodModal(list.find((p) => p.id === b.dataset.rpEdit)));
+  $$("[data-rp-del]").forEach((b) => b.onclick = async () => {
+    const p = list.find((x) => x.id === b.dataset.rpDel);
+    const ok = await confirmDialog({ title: tx("تمسح الفترة دي؟"), body: tx("التحديثات اللي اتكتبت فيها مش هتتمسح، والأيام دي هترجع للأسبوع العادي."), ok: "مسح" });
+    if (!ok) return;
+    const { error } = await sb.from("report_periods").delete().eq("id", p.id);
+    if (error) return toast(friendly(error), true);
+    W.periods = W.periods.filter((x) => x.id !== p.id); toast(tx("اتمسحت الفترة")); renderWeekly();
+  });
+}
+
+function openPeriodModal(p = null) {
+  const isNew = !p;
+  const def = (() => { const cur = currentPeriod(); return { s: cur.end, e: addDays(cur.end, 13) }; })();
+  const ov = openModal(`
+    <h2>${isNew ? tx("فترة جديدة") : tx("تعديل الفترة")}</h2>
+    <form id="rpf">
+      <label class="field"><span>${tx("اسم الفترة (اختياري)")}</span><input class="input" name="name" maxlength="80" value="${esc(p?.name || "")}" placeholder="${tx("مثلاً: Sprint 12")}"></label>
+      <div class="row2">
+        <label class="field"><span>${tx("من")}</span><input class="input" type="date" name="start" required value="${p?.start_date || def.s}"></label>
+        <label class="field"><span>${tx("لـ")}</span><input class="input" type="date" name="end" required value="${p?.end_date || def.e}"></label>
+      </div>
+      <small class="hint" id="rpf-len"></small>
+      ${!isNew ? `<small class="hint">${tx("لو غيّرت يوم البداية، التحديثات اللي اتكتبت في الفترة دي هتتنقل معاها.")}</small>` : ""}
+      <p class="err" id="rpf-err"></p>
+      <div class="modal-foot"><span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>إلغاء</button>
+        <button class="btn primary" type="submit">${isNew ? tx("إضافة الفترة") : tx("حفظ")}</button>
+      </div>
+    </form>`, { label: isNew ? tx("فترة جديدة") : tx("تعديل الفترة") });
+  $("[data-close]", ov).onclick = closeModal;
+  const f = $("#rpf", ov);
+  const len = () => { const a = f.elements.start.value, b = f.elements.end.value; $("#rpf-len", ov).textContent = a && b && b > a ? tx("{n} يوم", { n: Math.round((new Date(b) - new Date(a)) / 864e5) + 1 }) : ""; };
+  f.oninput = len; len();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const row = { name: f.elements.name.value.trim(), start_date: f.elements.start.value, end_date: f.elements.end.value };
+    const err = (m) => { $("#rpf-err", ov).textContent = m; };
+    if (!(row.end_date > row.start_date)) return err(tx("تاريخ النهاية لازم يبقى بعد البداية"));
+    if ((new Date(row.end_date) - new Date(row.start_date)) / 864e5 > 92) return err(tx("الفترة مينفعش تزيد عن 3 شهور"));
+    const btn = e.submitter; btn.disabled = true;
+    const q = isNew ? sb.from("report_periods").insert(row).select().single() : sb.from("report_periods").update(row).eq("id", p.id).select().single();
+    const { data, error } = await q;
+    btn.disabled = false;
+    if (error || !data) return err(error?.code === "23P01" ? tx("الفترة دي متداخلة مع فترة تانية متحددة") : error?.code === "23505" ? tx("فيه حد كاتب تحديثات في نفس اليوم ده، اختار يوم بداية تاني") : error ? friendly(error) : tx("مش مسموح لك"));
+    state.wu.periods = (state.wu.periods || []).filter((x) => x.id !== data.id).concat(data).sort((a, b) => b.start_date.localeCompare(a.start_date));
+    if (!isNew && state.wu.week === p.start_date) state.wu.week = data.start_date;
+    closeModal(); toast(isNew ? tx("اتضافت الفترة") : tx("اتحفظت الفترة")); renderWeekly();
+  };
 }
 
 function weeklyWrite(projects) {
@@ -3786,7 +3902,7 @@ function weeklyFile(projects) {
     ${data.length ? `<div class="card-box wu-preview">${weeklyDocHtml(data, false)}</div>`
       : `<div class="empty"><div class="ill">${icon("report")}</div><b>${tx("لسه محدش كتب تحديثات للأسبوع ده")}</b>${tx("أول ما حد يكتب من تبويب «تحديثاتي» هتظهر هنا.")}</div>`}`;
   $("#wu-fp").onchange = (e) => { W.fileProjects = e.target.value; weeklyFile(projects); };
-  const fname = `Weekly-Report-${W.week}`;
+  const fname = `Weekly-Report-${W.week}_to_${periodOf(W.week).end}`;
   $("#wu-pdf").onclick = () => printDoc(weeklyDocHtml(data, true), fname);
   $("#wu-doc").onclick = () => downloadWord(weeklyDocHtml(data, true, true), fname);
 }

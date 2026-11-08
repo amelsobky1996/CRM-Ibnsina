@@ -1555,7 +1555,7 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .wu-form-head h3 { margin: 0 0 2px; }
 .wu-form-head small { color: var(--muted); }
 .wu-st { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 99px; white-space: nowrap; }
-.wu-st.ok { background: #E3F5EC; color: #0E6B47; }
+.wu-st.ok { background: color-mix(in srgb, #128257 15%, transparent); color: color-mix(in srgb, #128257 75%, var(--ink)); }
 .wu-st.no { background: var(--line-2); color: var(--muted); }
 .wu-field > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wu-tag { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; padding: 2px 9px; border-radius: 6px; color: #fff; background: var(--tc); }
@@ -1591,3 +1591,11 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .wu-bar .tab { display: inline-flex; align-items: center; gap: 6px; }
 .wu-file-bar > .meta { align-self: center; padding-top: 22px; }
 @media (max-width: 760px) { .wu-projects { margin-bottom: 0; } .wu-file-bar > .meta { padding-top: 0; } }
+.wu-st.soon { background: color-mix(in srgb, #0472C4 15%, transparent); color: color-mix(in srgb, #0472C4 70%, var(--ink)); }
+.rp-list { display: grid; gap: 8px; }
+.rp-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 12px; }
+.rp-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.rp-main span { color: var(--muted); font-size: 13px; }
+.rp-row .icon-btn { width: 34px; height: 34px; color: var(--muted); }
+.rp-row .icon-btn:hover { background: var(--line-2); color: var(--ink); }
+@media (max-width: 760px) { .wu-form-head { flex-wrap: wrap; } .rp-row { flex-wrap: wrap; } .rp-main { flex-basis: 100%; } }

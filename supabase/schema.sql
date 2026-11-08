@@ -352,3 +352,7 @@ create trigger projects_lock_created_by before update on public.projects for eac
 
 -- v15 weekly report: public.weekly_updates (project_id, week_start [Monday], user_id, highs, lows, sprint, bugs)
 --   unique (project_id, week_start, user_id); everyone reads, each user writes only their own rows; admin may delete.
+
+-- v16 report periods: public.report_periods (name, start_date, end_date) — admin-defined custom periods for the weekly report.
+--   No overlaps (gist exclusion); they replace the standard Mon->Mon weeks they cover. weekly_updates.week_start = period start
+--   (isodow check dropped); trigger report_period_moved re-keys entries when an admin moves a period's start.
