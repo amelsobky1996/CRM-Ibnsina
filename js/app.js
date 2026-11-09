@@ -3718,7 +3718,13 @@ async function loadWeekly(week) {
   if (error) throw error;
   state.wu.rows = data || []; state.wu.loadedWeek = week;
   state.wu.digest = dg.error ? [] : dg.data || [];
+  if (state.wu.puReady == null) {
+    const probe = await sb.from("weekly_updates").select("project_update").limit(1);
+    state.wu.puReady = !probe.error;
+  }
 }
+// The Project Update column ships with DB migration v17; until it's applied the section stays hidden.
+const wuFields = () => state.wu.puReady ? WU_FIELDS : WU_FIELDS.filter(([k]) => k !== "project_update");
 const wuText = (r, k) => (r?.[k] || "").trim();
 // "Project Update" lines generated from the tasks assigned to someone in this project & period:
 // finished during the period, or still open with a deadline inside it (or within a week after it).
@@ -3852,12 +3858,12 @@ function weeklyWrite(projects) {
     <div class="wu-grid">
       <aside class="wu-projects card-box">
         <h3>${icon("projects", "sm")}${tx("المشروع")}</h3>
-        ${projects.map((p) => { const done = mine.some((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => wuText(r, k))); return `<button class="wu-proj ${p.id === W.project ? "on" : ""}" data-wproj="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}"><i></i><span>${esc(p.name)}</span>${done ? `<em title="${tx("اتكتب")}">${icon("check", "sm")}</em>` : ""}</button>`; }).join("")}
+        ${projects.map((p) => { const done = mine.some((r) => r.project_id === p.id && wuFields().some(([k]) => wuText(r, k))); return `<button class="wu-proj ${p.id === W.project ? "on" : ""}" data-wproj="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}"><i></i><span>${esc(p.name)}</span>${done ? `<em title="${tx("اتكتب")}">${icon("check", "sm")}</em>` : ""}</button>`; }).join("")}
       </aside>
       <form class="card-box wu-form" id="wu-form">
         <div class="wu-form-head"><div><h3>${esc(project(W.project)?.name || "")}</h3><small>${weekLabel(W.week)}</small></div>
           ${row.updated_at ? `<span class="wu-st ok">${tx("اتحفظ {t}", { t: timeAgo(row.updated_at) })}</span>` : `<span class="wu-st no">${tx("لسه ماتكتبش")}</span>`}</div>
-        ${WU_FIELDS.map(([k, label, hint]) => `
+        ${wuFields().map(([k, label, hint]) => `
           <label class="field wu-field f-${k}"><span><b class="wu-tag">${label}</b> ${tx(hint)}</span>
             <textarea class="input" name="${k}" rows="4" maxlength="5000" placeholder="${k === "project_update" ? tx("مفيش تاسكات خلصت أو قربت تخلص ليك في المشروع ده الفترة دي — اكتب اللي عملته") : tx("كل نقطة في سطر لوحدها")}">${esc(val(k))}</textarea>
             ${k === "project_update" && autoPU ? `<span class="wu-auto">${icon("tasks", "sm")}${tx("{n} تاسك من قائمة مهامك", { n: digestItems(W.project, me).length })} <button type="button" class="wu-link" id="wu-refill">${tx("املاها تاني من التاسكات")}</button></span>` : ""}</label>`).join("")}
@@ -3871,12 +3877,12 @@ function weeklyWrite(projects) {
     </div>`;
   $$("[data-wproj]").forEach((b) => b.onclick = () => { W.project = b.dataset.wproj; weeklyWrite(projects); });
   const form = $("#wu-form");
-  form.oninput = () => { W.drafts[draftKey] = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value])); };
+  form.oninput = () => { W.drafts[draftKey] = Object.fromEntries(wuFields().map(([k]) => [k, form.elements[k].value])); };
   const refill = $("#wu-refill");
   if (refill) refill.onclick = () => { form.elements.project_update.value = autoPU; form.oninput(); form.elements.project_update.focus(); };
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const vals = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value.trim()]));
+    const vals = Object.fromEntries(wuFields().map(([k]) => [k, form.elements[k].value.trim()]));
     if (!Object.values(vals).some(Boolean)) { $("#wu-err").textContent = tx("اكتب في خانة واحدة على الأقل"); return; }
     const btn = e.submitter; btn.disabled = true;
     const { error } = await sb.from("weekly_updates").upsert({ project_id: W.project, week_start: W.week, user_id: me, ...vals }, { onConflict: "project_id,week_start,user_id" });
@@ -3901,7 +3907,7 @@ function weeklyCompiled(projects) {
   const W = state.wu;
   const nameOf = (uid) => profile(uid)?.full_name || "";
   return projects.map((p) => {
-    const rows = W.rows.filter((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => wuText(r, k)))
+    const rows = W.rows.filter((r) => r.project_id === p.id && wuFields().some(([k]) => wuText(r, k)))
       .sort((a, b) => nameOf(a.user_id).localeCompare(nameOf(b.user_id), "ar"));
     // anyone who didn't write a Project Update gets one generated from their tasks (one line per task, all its assignees named)
     const wrote = new Set(rows.filter((r) => wuText(r, "project_update")).map((r) => r.user_id));
@@ -3912,7 +3918,7 @@ function weeklyCompiled(projects) {
       e.who.push(nameOf(d.user_id)); byTask.set(d.task_id, e);
     }
     const auto = [...byTask.values()].map(({ d, who }) => ({ t: digestLine(d), who: who.filter(Boolean).join("، "), auto: true }));
-    const sections = WU_FIELDS.map(([k, label]) => ({ k, label, items: [
+    const sections = wuFields().map(([k, label]) => ({ k, label, items: [
       ...rows.flatMap((r) => wuLines(r[k] || "").map((t) => ({ t, who: nameOf(r.user_id) }))),
       ...(k === "project_update" ? auto : []),
     ] }));
