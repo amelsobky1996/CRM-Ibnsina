@@ -1599,3 +1599,6 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .rp-row .icon-btn { width: 34px; height: 34px; color: var(--muted); }
 .rp-row .icon-btn:hover { background: var(--line-2); color: var(--ink); }
 @media (max-width: 760px) { .wu-form-head { flex-wrap: wrap; } .rp-row { flex-wrap: wrap; } .rp-main { flex-basis: 100%; } }
+.f-project_update, .s-project_update { --tc: #6D28D9; }
+.wu-auto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.wu-auto .wu-link { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--brand, #0472C4); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }

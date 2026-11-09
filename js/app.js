@@ -2746,6 +2746,7 @@ document.addEventListener("visibilitychange", () => {
    ===================================================================== */
 const PTS = { present: 0, absent: -3, every3: -10 };
 const cairoToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+const cairoDay = (ts) => new Date(ts).toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 const dayName = (i, style = "long") => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE(), { weekday: style });
 const fmtDayLong = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const fmtDayShort = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE(), { weekday: "short", day: "numeric", month: "short" });
@@ -3659,6 +3660,7 @@ async function groupMetaReload() {
    the system compiles one downloadable file. Weeks run Monday -> Monday.
    ===================================================================== */
 const WU_FIELDS = [
+  ["project_update", "Project Update", "التاسكات اللي خلصت أو قربت تخلص — بتتملى لوحدها من المهام وتقدر تعدّل فيها"],
   ["highs", "Highs", "إيه اللي مشي كويس الأسبوع ده؟"],
   ["lows", "Lows", "إيه المشاكل أو اللي اتأخر؟"],
   ["sprint", "Sprint Updates", "التقدم في السبرنت والمهام اللي اتعملت"],
@@ -3708,10 +3710,24 @@ function weekOptions(selected) {
   }).join("");
 }
 async function loadWeekly(week) {
-  const { data, error } = await sb.from("weekly_updates").select("*").eq("week_start", week);
+  const per = periodOf(week), last = per.incl ? per.end : addDays(per.end, -1);
+  const [{ data, error }, dg] = await Promise.all([
+    sb.from("weekly_updates").select("*").eq("week_start", week),
+    sb.rpc("weekly_task_digest", { p_start: week, p_end: last }),
+  ]);
   if (error) throw error;
   state.wu.rows = data || []; state.wu.loadedWeek = week;
+  state.wu.digest = dg.error ? [] : dg.data || [];
 }
+const wuText = (r, k) => (r?.[k] || "").trim();
+// "Project Update" lines generated from the tasks assigned to someone in this project & period:
+// finished during the period, or still open with a deadline inside it (or within a week after it).
+function digestItems(pid, uid) { return (state.wu.digest || []).filter((d) => d.project_id === pid && (!uid || d.user_id === uid)); }
+function digestLine(d) {
+  if (d.status === "done") return `✅ ${d.title} — ${tx("اتقفلت {date}", { date: fmtDM(cairoDay(d.completed_at)) })}`;
+  return `⏳ ${d.title} — ${tx(STATUS[d.status] || d.status)} · ${d.progress || 0}%${d.deadline ? " · " + tx("الموعد {date}", { date: fmtDM(d.deadline) }) : ""}`;
+}
+const digestText = (pid, uid) => digestItems(pid, uid).map(digestLine).join("\n");
 
 async function weeklyRefresh() {
   state.wu.loadedWeek = null;
@@ -3829,19 +3845,22 @@ function weeklyWrite(projects) {
   const row = mine.find((r) => r.project_id === W.project) || {};
   const draftKey = `${W.project}|${W.week}`;
   const draft = W.drafts[draftKey] || {};
-  const val = (k) => draft[k] ?? row[k] ?? "";
+  const autoPU = digestText(W.project, me);
+  // an empty Project Update is filled from the tasks (same rule the compiled file uses)
+  const val = (k) => draft[k] ?? (k === "project_update" ? wuText(row, k) || autoPU : row[k] ?? "");
   $("#wu-body").innerHTML = `
     <div class="wu-grid">
       <aside class="wu-projects card-box">
         <h3>${icon("projects", "sm")}${tx("المشروع")}</h3>
-        ${projects.map((p) => { const done = mine.some((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => r[k].trim())); return `<button class="wu-proj ${p.id === W.project ? "on" : ""}" data-wproj="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}"><i></i><span>${esc(p.name)}</span>${done ? `<em title="${tx("اتكتب")}">${icon("check", "sm")}</em>` : ""}</button>`; }).join("")}
+        ${projects.map((p) => { const done = mine.some((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => wuText(r, k))); return `<button class="wu-proj ${p.id === W.project ? "on" : ""}" data-wproj="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}"><i></i><span>${esc(p.name)}</span>${done ? `<em title="${tx("اتكتب")}">${icon("check", "sm")}</em>` : ""}</button>`; }).join("")}
       </aside>
       <form class="card-box wu-form" id="wu-form">
         <div class="wu-form-head"><div><h3>${esc(project(W.project)?.name || "")}</h3><small>${weekLabel(W.week)}</small></div>
           ${row.updated_at ? `<span class="wu-st ok">${tx("اتحفظ {t}", { t: timeAgo(row.updated_at) })}</span>` : `<span class="wu-st no">${tx("لسه ماتكتبش")}</span>`}</div>
         ${WU_FIELDS.map(([k, label, hint]) => `
           <label class="field wu-field f-${k}"><span><b class="wu-tag">${label}</b> ${tx(hint)}</span>
-            <textarea class="input" name="${k}" rows="4" maxlength="5000" placeholder="${tx("كل نقطة في سطر لوحدها")}">${esc(val(k))}</textarea></label>`).join("")}
+            <textarea class="input" name="${k}" rows="4" maxlength="5000" placeholder="${k === "project_update" ? tx("مفيش تاسكات خلصت أو قربت تخلص ليك في المشروع ده الفترة دي — اكتب اللي عملته") : tx("كل نقطة في سطر لوحدها")}">${esc(val(k))}</textarea>
+            ${k === "project_update" && autoPU ? `<span class="wu-auto">${icon("tasks", "sm")}${tx("{n} تاسك من قائمة مهامك", { n: digestItems(W.project, me).length })} <button type="button" class="wu-link" id="wu-refill">${tx("املاها تاني من التاسكات")}</button></span>` : ""}</label>`).join("")}
         <p class="err" id="wu-err"></p>
         <div class="modal-foot">
           ${row.id ? `<button type="button" class="btn danger ghost" id="wu-del">${icon("trash", "sm")}${tx("مسح تحديثاتي للمشروع ده")}</button>` : ""}
@@ -3853,6 +3872,8 @@ function weeklyWrite(projects) {
   $$("[data-wproj]").forEach((b) => b.onclick = () => { W.project = b.dataset.wproj; weeklyWrite(projects); });
   const form = $("#wu-form");
   form.oninput = () => { W.drafts[draftKey] = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value])); };
+  const refill = $("#wu-refill");
+  if (refill) refill.onclick = () => { form.elements.project_update.value = autoPU; form.oninput(); form.elements.project_update.focus(); };
   form.onsubmit = async (e) => {
     e.preventDefault();
     const vals = Object.fromEntries(WU_FIELDS.map(([k]) => [k, form.elements[k].value.trim()]));
@@ -3878,12 +3899,26 @@ function weeklyWrite(projects) {
 const wuLines = (text) => text.split(/\n+/).map((l) => l.replace(/^\s*[-•*·]\s*/, "").trim()).filter(Boolean);
 function weeklyCompiled(projects) {
   const W = state.wu;
+  const nameOf = (uid) => profile(uid)?.full_name || "";
   return projects.map((p) => {
-    const rows = W.rows.filter((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => r[k].trim()))
-      .sort((a, b) => (profile(a.user_id)?.full_name || "").localeCompare(profile(b.user_id)?.full_name || "", "ar"));
-    const sections = WU_FIELDS.map(([k, label]) => ({ k, label, items: rows.flatMap((r) => wuLines(r[k]).map((t) => ({ t, who: profile(r.user_id)?.full_name || "" }))) }));
-    return { p, rows, sections };
-  }).filter((x) => x.rows.length);
+    const rows = W.rows.filter((r) => r.project_id === p.id && WU_FIELDS.some(([k]) => wuText(r, k)))
+      .sort((a, b) => nameOf(a.user_id).localeCompare(nameOf(b.user_id), "ar"));
+    // anyone who didn't write a Project Update gets one generated from their tasks (one line per task, all its assignees named)
+    const wrote = new Set(rows.filter((r) => wuText(r, "project_update")).map((r) => r.user_id));
+    const byTask = new Map();
+    for (const d of digestItems(p.id)) {
+      if (wrote.has(d.user_id)) continue;
+      const e = byTask.get(d.task_id) || { d, who: [] };
+      e.who.push(nameOf(d.user_id)); byTask.set(d.task_id, e);
+    }
+    const auto = [...byTask.values()].map(({ d, who }) => ({ t: digestLine(d), who: who.filter(Boolean).join("، "), auto: true }));
+    const sections = WU_FIELDS.map(([k, label]) => ({ k, label, items: [
+      ...rows.flatMap((r) => wuLines(r[k] || "").map((t) => ({ t, who: nameOf(r.user_id) }))),
+      ...(k === "project_update" ? auto : []),
+    ] }));
+    const people = new Set([...rows.map((r) => r.user_id), ...digestItems(p.id).filter((d) => !wrote.has(d.user_id)).map((d) => d.user_id)]);
+    return { p, rows, auto: auto.length, people: people.size, sections };
+  }).filter((x) => x.rows.length || x.auto);
 }
 
 function weeklyFile(projects) {
@@ -3910,13 +3945,13 @@ function weeklyFile(projects) {
 // one document: project name, then its 4 sections with everyone's points
 function weeklyDocHtml(data, forFile, word = false) {
   const head = `<div class="pd-head">${word ? "" : `<img src="assets/logo-white.png" alt="">`}<div><b>${tx("التقرير الأسبوعي")}</b><span>${weekLabel(state.wu.week)}</span></div>${forFile ? `<small>${tx("اتطبع {date}", { date: new Date().toLocaleString(LOCALE(), { dateStyle: "medium", timeStyle: "short" }) })}</small>` : ""}</div>`;
-  return (forFile ? head : "") + data.map(({ p, rows, sections }) => `
+  return (forFile ? head : "") + data.map(({ p, people, sections }) => `
     <section class="wu-proj-sec">
-      <h2 class="wu-ph" style="--c:${esc(p.color || "#0B6FC4")}">${esc(p.name)}<small>${tx("{n} شاركوا", { n: rows.length })}</small></h2>
+      <h2 class="wu-ph" style="--c:${esc(p.color || "#0B6FC4")}">${esc(p.name)}<small>${tx("{n} شاركوا", { n: people })}</small></h2>
       ${sections.map((s) => `
         <div class="wu-sec s-${s.k}">
           <h4>${s.label}</h4>
-          ${s.items.length ? `<ul>${s.items.map((i) => `<li><span dir="auto">${esc(i.t)}</span> <em>— ${esc(i.who)}</em></li>`).join("")}</ul>` : `<p class="wu-none">—</p>`}
+          ${s.items.length ? `<ul>${s.items.map((i) => `<li><span dir="auto">${esc(i.t)}</span> <em>— ${esc(i.who)}${i.auto ? ` · ${tx("تلقائي")}` : ""}</em></li>`).join("")}</ul>` : `<p class="wu-none">—</p>`}
         </div>`).join("")}
     </section>`).join("");
 }
@@ -3932,7 +3967,7 @@ function downloadWord(bodyHtml, name) {
     h2 small{font-size:9pt;color:#6B7A93;font-weight:normal;margin:0 8pt}
     h4{font-size:12pt;margin:10pt 0 3pt;color:#0472C4}
     ul{margin:0 0 4pt;padding-${rtl ? "right" : "left"}:18pt} li{margin:2pt 0} em{color:#6B7A93;font-style:normal;font-size:9.5pt}
-    .s-highs h4{color:#128257}.s-lows h4{color:#C9303B}.s-sprint h4{color:#0472C4}.s-bugs h4{color:#B45309}
+    .s-project_update h4{color:#6D28D9}.s-highs h4{color:#128257}.s-lows h4{color:#C9303B}.s-sprint h4{color:#0472C4}.s-bugs h4{color:#B45309}
   </style></head><body>${bodyHtml}</body></html>`;
   const blob = new Blob(["﻿", html], { type: "application/msword" });
   const a = document.createElement("a");
