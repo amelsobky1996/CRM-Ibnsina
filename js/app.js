@@ -3159,19 +3159,19 @@ async function renderAttendance() {
   if (!A.cycle) A.cycle = curCycle();
 
   view.innerHTML = `
-    <div class="page-head">
+    <div class="page-head hero">
       <div><h1>الحضور والنقاط</h1>
         <p>${tx("الدورة الحالية {range}", { range: cycleLabel(curCycle()) })} · ${tx("الاستاند أب: {days}", { days: A.days.length ? A.days.slice().sort().map((d) => dayName(d)).join(LANG === "en" ? ", " : "، ") : tx("مفيش أيام متحددة") })}</p></div>
       <div class="att-head-actions">
         ${canExportAtt() ? `<button class="btn ghost" id="att-export">${icon("download")}${tx("تصدير PDF")}</button>` : ""}
         <div class="pts-head-me ${ptsTone(s.total)}">${icon("trophy", "sm")}<span>${tx("رصيدك")}</span><b>${s.total}</b></div>
       </div>
-    </div>
-    <div class="rules">
-      <span class="rule base"><b>${PTS_BASE}</b>رصيد البداية كل دورة (من يوم 16 لـ يوم 15)</span>
-      <span class="rule bad"><b>${PTS.absent}</b>غياب</span>
-      <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الدورة</span>
-      <span class="rule thx"><b>+</b>نقاط شكر من الإدارة</span>
+      <div class="rules">
+        <span class="rule base"><b>${PTS_BASE}</b>رصيد البداية كل دورة (من يوم 16 لـ يوم 15)</span>
+        <span class="rule bad"><b>${PTS.absent}</b>غياب</span>
+        <span class="rule bad"><b>${PTS.every3}</b>إضافية مع كل 3 غيابات في نفس الدورة</span>
+        <span class="rule thx"><b>+</b>نقاط شكر من الإدارة</span>
+      </div>
     </div>
     <div class="tabs" role="tablist"><span class="pill-bg"></span>${tabs.map(([k, l]) => `<button class="tab ${A.tab === k ? "on" : ""}" data-atab="${k}" role="tab" aria-selected="${A.tab === k}">${l}</button>`).join("")}</div>
     <div id="att-body"></div>`;
@@ -4052,7 +4052,7 @@ async function renderWeekly() {
   const projects = state.projects.filter((p) => p.status !== "archived").sort((a, b) => a.name.localeCompare(b.name, "ar"));
   if (!W.project || !projects.some((p) => p.id === W.project)) W.project = projects[0]?.id || null;
   $("#view").innerHTML = `
-    <div class="page-head"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين، إلا لو الأدمن حدد فترة تانية.")}</p></div></div>
+    <div class="page-head hero"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين، إلا لو الأدمن حدد فترة تانية.")}</p></div>
     <div class="wu-bar">
       <label class="field"><span>${tx("الفترة")}</span><select class="input" id="wu-week">${weekOptions(W.week)}</select></label>
       <div class="tabs" role="tablist"><span class="pill-bg"></span>
@@ -4060,7 +4060,7 @@ async function renderWeekly() {
         <button class="tab ${W.tab === "file" ? "on" : ""}" data-wtab="file">${icon("report", "sm")}${tx("الملف المجمّع")}</button>
         ${state.me.is_admin ? `<button class="tab ${W.tab === "periods" ? "on" : ""}" data-wtab="periods">${icon("calendar", "sm")}${tx("الفترات")}</button>` : ""}
       </div>
-    </div>
+    </div></div>
     <div id="wu-body"><div class="lb-skel">${"<i></i>".repeat(4)}</div></div>`;
   placeTabPill($("#view"));
   $("#wu-week").onchange = (e) => { W.week = e.target.value; renderWeekly(); };
@@ -4611,7 +4611,7 @@ function renderOrg() {
   const managers = state.profiles.filter((p) => (state.children.get(p.id) || []).length).length;
 
   $("#view").innerHTML = `
-    <div class="page-head">
+    <div class="page-head hero">
       <div><h1>الهيكل التنظيمي</h1><p>${tx("{n} موظف · {m} مدير · {l} مستويات", { n: state.profiles.length, m: managers, l: levels.length })}</p></div>
       <div class="org-tools">
         <button class="btn sm" id="org-expand">${icon("expand", "sm")}فتح الكل</button>
