@@ -32,6 +32,7 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  filter: '<path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   logout: '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h11"/>',
@@ -889,6 +890,7 @@ function renderTasks() {
   const firstName = state.me.full_name.split(" ")[0];
   const myOpen = tasksForTab("mine").filter((t) => t.status !== "done").length;
 
+  const STAT_LABELS = { open: tx("مفتوحة"), overdue: tx("متأخرة"), week: tx("خلال 7 أيام"), done: tx("مكتملة") };
   const statCard = (key, label, ic, tone, n) =>
     `<button class="stat ${tone} ${v.status === key ? "on" : ""}" data-st="${key}" aria-pressed="${v.status === key}">
        <div class="ico">${icon(ic)}</div><b data-count="${n}">${n}</b><span>${label}</span></button>`;
@@ -900,21 +902,23 @@ function renderTasks() {
         ${filterProj ? `<div class="proj-lead-line">${profile(filterProj.lead_id) ? `${avatar(profile(filterProj.lead_id), "sm")}<span>${tx("المسؤول: {name}", { name: esc(profile(filterProj.lead_id).full_name) })}</span>` : "<span>بدون مسؤول</span>"}</div>` : ""}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${filterProj && canEditProject(filterProj) ? `<button class="btn ghost" id="edit-cur-proj">${icon("edit")}تعديل المشروع</button>` : ""}
-        <button class="btn primary" id="new-task">${icon("plus")}مهمة جديدة</button>
+        <div class="tf">
+          <button class="btn tf-btn ${v.status !== "all" ? "active" : ""}" id="tf-btn" aria-haspopup="dialog" aria-expanded="false">${icon("filter")}<span>${tx("فلتر")}</span><em>${tabs.find(([k]) => k === v.tab)[1]}${STAT_LABELS[v.status] ? " · " + STAT_LABELS[v.status] : ""}</em></button>
+          <div class="tf-pop" id="tf-pop" role="dialog" aria-label="${tx("فلتر")}" hidden>
+            <h4>${tx("المهام")}</h4>
+            <div class="tf-opts">${tabs.map(([k, l]) => `<button class="tf-opt ${v.tab === k ? "on" : ""}" data-ftab="${k}"><span>${l}</span><b>${tasksForTab(k).length}</b></button>`).join("")}</div>
+            <h4>${tx("الحالة")}</h4>
+            <div class="tf-stats">
+              ${[["open", "مفتوحة", "inbox", "", stats.open], ["overdue", "متأخرة", "flame", "t-bad", stats.overdue], ["week", "خلال 7 أيام", "clock", "t-warn", stats.week], ["done", "مكتملة", "check", "t-ok", stats.done]]
+                .map(([k, l, ic, tone, n]) => `<button class="tf-stat ${tone} ${v.status === k ? "on" : ""}" data-fst="${k}" aria-pressed="${v.status === k}"><span class="ico">${icon(ic, "sm")}</span><b>${n}</b><span>${l}</span></button>`).join("")}
+            </div>
+            ${v.status !== "all" || v.tab !== "mine" ? `<button class="tf-reset" id="tf-reset">${icon("close", "sm")}${tx("مسح الفلتر")}</button>` : ""}
+          </div>
+        </div>
+        <button class="btn primary new-task-btn" id="new-task"><span class="nt-plus">${icon("plus")}</span>مهمة جديدة</button>
       </div>
     </div>
-    <div class="stats ${board ? "is-board" : ""}">
-      ${statCard("open", "مفتوحة", "inbox", "", stats.open)}
-      ${statCard("overdue", "متأخرة", "flame", "t-bad", stats.overdue)}
-      ${statCard("week", "خلال 7 أيام", "clock", "t-warn", stats.week)}
-      ${statCard("done", "مكتملة", "check", "t-ok", stats.done)}
-    </div>
-    <div>
-      <div class="tabs" role="tablist"><span class="pill-bg"></span>
-        ${tabs.map(([k, l]) => `<button role="tab" aria-selected="${v.tab === k}" data-tab="${k}" class="${v.tab === k ? "on" : ""}">${l}<span class="n">${tasksForTab(k).length}</span></button>`).join("")}
-      </div>
-      ${filterUser ? `<span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span>` : ""}
-    </div>
+    ${filterUser ? `<div><span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span></div>` : ""}
     <div class="toolbar ${board ? "tb-board" : ""}">
       <div class="view-toggle" role="group" aria-label="طريقة العرض">
         <button class="${board ? "" : "on"}" data-view="list" aria-pressed="${!board}" title="قائمة">${icon("rows", "sm")}<span>قائمة</span></button>
@@ -946,6 +950,16 @@ function renderTasks() {
     </div>`}`;
 
   $("#new-task").onclick = () => openNewTask();
+  // filter popover: which tasks (mine / created / team / all) + status shortcuts with counts
+  const tfBtn = $("#tf-btn"), tfPop = $("#tf-pop");
+  const tfClose = () => { tfPop.hidden = true; tfBtn.setAttribute("aria-expanded", "false"); };
+  tfBtn.onclick = (e) => { e.stopPropagation(); const open = tfPop.hidden; tfPop.hidden = !open; tfBtn.setAttribute("aria-expanded", String(open)); };
+  tfPop.onclick = (e) => e.stopPropagation();
+  tfPop.onkeydown = (e) => { if (e.key === "Escape") { e.stopPropagation(); tfClose(); tfBtn.focus(); } };
+  document.addEventListener("click", tfClose, { once: true });
+  $$("[data-ftab]", tfPop).forEach((b) => b.onclick = () => { v.tab = b.dataset.ftab; state.animate = true; renderTasks(); afterRender(); $("#tf-btn")?.click(); });
+  $$("[data-fst]", tfPop).forEach((b) => b.onclick = () => { v.status = v.status === b.dataset.fst ? "all" : b.dataset.fst; state.animate = true; renderTasks(); afterRender(); $("#tf-btn")?.click(); });
+  const tfr = $("#tf-reset"); if (tfr) tfr.onclick = () => { v.tab = "mine"; v.status = "all"; state.animate = true; renderTasks(); afterRender(); };
   const ecp = $("#edit-cur-proj"); if (ecp) ecp.onclick = () => openProjectModal(filterProj);
   $$("[data-view]").forEach((b) => b.onclick = () => {
     if (b.dataset.view === getView()) return;
@@ -4229,6 +4243,7 @@ function weeklyFile(projects) {
       <span class="meta" style="margin:0">${tx("{n} شاركوا في الأسبوع ده", { n: contributors.size })}</span>
       <span class="spacer"></span>
       <button class="btn ghost" id="wu-doc" ${data.length ? "" : "disabled"}>${icon("download", "sm")}${tx("تحميل Word")}</button>
+      <button class="btn ghost" id="wu-ppt" ${data.length ? "" : "disabled"}>${icon("board", "sm")}${tx("تحميل PowerPoint")}</button>
       <button class="btn primary" id="wu-pdf" ${data.length ? "" : "disabled"}>${icon("printer", "sm")}${tx("تحميل PDF")}</button>
     </div>
     ${data.length ? `<div class="card-box wu-preview">${weeklyDocHtml(data, false)}</div>`
@@ -4237,6 +4252,167 @@ function weeklyFile(projects) {
   const fname = `Weekly-Report-${W.week}_to_${periodOf(W.week).end}`;
   $("#wu-pdf").onclick = () => printDoc(weeklyDocHtml(data, true), fname);
   $("#wu-doc").onclick = () => downloadWord(weeklyDocHtml(data, true, true), fname);
+  $("#wu-ppt").onclick = async (e) => {
+    const b = e.currentTarget, html = b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spinner sm"></span>${tx("بيتجهز…")}`;
+    try { await downloadWeeklyPptx(data, fname); toast(tx("اتحمّل ملف الباوربوينت")); }
+    catch (ex) { console.error(ex); toast(friendly(ex), true); }
+    b.disabled = false; b.innerHTML = html;
+  };
+}
+
+/* ---------- Weekly report → PowerPoint (built in the browser with PptxGenJS) ---------- */
+const PPTX_SRC = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
+let pptxLib = null;
+function loadPptx() {
+  if (window.PptxGenJS) return Promise.resolve(window.PptxGenJS);
+  return pptxLib ||= new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = PPTX_SRC; s.onload = () => res(window.PptxGenJS); s.onerror = () => { pptxLib = null; rej(new Error(tx("مقدرناش نحمّل أداة الباوربوينت، جرّب تاني"))); };
+    document.head.append(s);
+  });
+}
+const toDataUrl = (url) => fetch(url).then((r) => r.blob()).then((b) => new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b); }));
+// the header's brand gradient, painted once as a slide background
+function brandBackdrop(rtl, accent = null) {
+  const c = document.createElement("canvas"); c.width = 1920; c.height = 1080;
+  const g = c.getContext("2d");
+  const lin = g.createLinearGradient(0, 0, 1920, 700);
+  [[0, "#052B57"], [.4, "#0656A3"], [.72, "#0870C8"], [1, "#2F6ACB"]].forEach(([o, col]) => lin.addColorStop(o, col));
+  g.fillStyle = lin; g.fillRect(0, 0, 1920, 1080);
+  const glow = (x, y, r, col) => { const rg = g.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, col); rg.addColorStop(1, "rgba(0,0,0,0)"); g.fillStyle = rg; g.fillRect(0, 0, 1920, 1080); };
+  glow(rtl ? 1650 : 270, -120, 900, "rgba(255,255,255,.20)");
+  glow(rtl ? 380 : 1540, 1250, 900, "rgba(124,92,230,.38)");
+  if (accent) glow(rtl ? 300 : 1620, 300, 700, accent + "55");
+  // faint sun rays (the Ibnsina symbol)
+  const cx = rtl ? 300 : 1620, cy = 540;
+  g.strokeStyle = "rgba(255,255,255,.07)"; g.lineWidth = 10; g.lineCap = "round";
+  for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2; g.beginPath(); g.moveTo(cx + Math.cos(a) * 170, cy + Math.sin(a) * 170); g.lineTo(cx + Math.cos(a) * 420, cy + Math.sin(a) * 420); g.stroke(); }
+  return c.toDataURL("image/jpeg", 0.86);
+}
+
+async function downloadWeeklyPptx(data, fname) {
+  const Pptx = await loadPptx();
+  const rtl = document.documentElement.dir === "rtl";
+  const pres = new Pptx();
+  pres.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
+  pres.author = state.me.full_name; pres.company = "Ibnsina Pharma"; pres.title = tx("التقرير الأسبوعي");
+  pres.rtlMode = rtl;
+  const W = 13.333, H = 7.5, M = 0.7;
+  const FONT = rtl ? "Segoe UI" : "Segoe UI";
+  const INK = "142037", MUTED = "6B7A93", LINE = "E4EAF2";
+  const hasAr = (t) => /[؀-ۿ]/.test(t);
+  const dirOf = (t) => (hasAr(t) || (rtl && !/[A-Za-z]/.test(t))) ? { align: "right", rtlMode: true } : { align: "left", rtlMode: false };
+  const pageAlign = rtl ? "right" : "left";
+  const hex = (c) => (c || "#0B6FC4").replace("#", "").slice(0, 6).toUpperCase();
+  const period = weekLabel(state.wu.week);
+  const [logo, bgTitle] = await Promise.all([toDataUrl("assets/logo-white.png"), Promise.resolve(brandBackdrop(rtl))]);
+  const SEC = { project_update: "6D28D9", highs: "128257", lows: "C9303B", sprint: "0472C4", bugs: "B45309" };
+  let pageNo = 0;
+  const footer = (s, projName) => {
+    pageNo++;
+    s.addShape(pres.ShapeType.line, { x: M, y: H - 0.62, w: W - 2 * M, h: 0, line: { color: LINE, width: 0.75 } });
+    s.addText(`${projName ? projName + "  ·  " : ""}${period}`, { x: M, y: H - 0.55, w: W - 2 * M - 1, h: 0.35, fontFace: FONT, fontSize: 10, color: MUTED, align: pageAlign, rtlMode: rtl });
+    s.addText(String(pageNo), { x: rtl ? M : W - M - 0.8, y: H - 0.55, w: 0.8, h: 0.35, fontFace: FONT, fontSize: 10, bold: true, color: MUTED, align: rtl ? "left" : "right" });
+  };
+
+  // 1) cover
+  {
+    const s = pres.addSlide(); pageNo++;
+    s.background = { data: bgTitle };
+    s.addImage({ data: logo, x: rtl ? W - M - 2.6 : M, y: 0.6, w: 2.6, h: 2.6 * 162 / 440 });
+    s.addText(tx("التقرير الأسبوعي"), { x: M, y: 2.55, w: W - 2 * M, h: 1.1, fontFace: FONT, fontSize: 48, bold: true, color: "FFFFFF", align: pageAlign, rtlMode: rtl });
+    s.addText(period, { x: M, y: 3.6, w: W - 2 * M, h: 0.6, fontFace: FONT, fontSize: 22, color: "D6E6FA", align: pageAlign, rtlMode: rtl });
+    s.addShape(pres.ShapeType.roundRect, { x: rtl ? W - M - 1.2 : M, y: 4.45, w: 1.2, h: 0.08, fill: { color: "FFFFFF", transparency: 25 }, rectRadius: 0.04, line: { type: "none" } });
+    const people = new Set(data.flatMap((d) => d.sections.flatMap((x) => x.items.map((i) => i.who))).filter(Boolean)).size;
+    s.addText(tx("{p} مشروع  ·  {n} مشارك", { p: data.length, n: people }), { x: M, y: 4.75, w: W - 2 * M, h: 0.45, fontFace: FONT, fontSize: 15, color: "BFD6F2", align: pageAlign, rtlMode: rtl });
+    s.addText("Digital Team Tasks Tracker", { x: M, y: H - 0.9, w: W - 2 * M, h: 0.4, fontFace: FONT, fontSize: 11, color: "9EBBE0", align: pageAlign, charSpacing: 2 });
+  }
+
+  // 2) agenda
+  {
+    const s = pres.addSlide(); s.background = { color: "FFFFFF" };
+    s.addText(tx("المحتوى"), { x: M, y: 0.55, w: W - 2 * M, h: 0.8, fontFace: FONT, fontSize: 30, bold: true, color: INK, align: pageAlign, rtlMode: rtl });
+    s.addShape(pres.ShapeType.roundRect, { x: rtl ? W - M - 0.9 : M, y: 1.35, w: 0.9, h: 0.07, fill: { color: "0656A3" }, rectRadius: 0.03, line: { type: "none" } });
+    const cols = data.length > 6 ? 2 : 1, perCol = Math.ceil(data.length / cols), colW = (W - 2 * M - (cols - 1) * 0.5) / cols;
+    data.forEach(({ p, people }, i) => {
+      const c = Math.floor(i / perCol), r = i % perCol;
+      const x = rtl ? W - M - (c + 1) * colW - c * 0.5 : M + c * (colW + 0.5), y = 1.85 + r * 0.78;
+      s.addShape(pres.ShapeType.roundRect, { x, y, w: colW, h: 0.64, fill: { color: "F6F8FC" }, line: { color: LINE, width: 0.75 }, rectRadius: 0.1 });
+      s.addShape(pres.ShapeType.roundRect, { x: rtl ? x + colW - 0.62 : x + 0.14, y: y + 0.12, w: 0.48, h: 0.4, fill: { color: hex(p.color) }, rectRadius: 0.08, line: { type: "none" } });
+      s.addText(String(i + 1).padStart(2, "0"), { x: rtl ? x + colW - 0.62 : x + 0.14, y: y + 0.12, w: 0.48, h: 0.4, fontFace: FONT, fontSize: 13, bold: true, color: "FFFFFF", align: "center", valign: "middle" });
+      s.addText(p.name, { x: rtl ? x + 1.6 : x + 0.8, y, w: colW - 2.45, h: 0.64, fontFace: FONT, fontSize: 16, bold: true, color: INK, valign: "middle", ...dirOf(p.name) });
+      s.addText(tx("{n} شاركوا", { n: people }), { x: rtl ? x + 0.15 : x + colW - 1.6, y, w: 1.45, h: 0.64, fontFace: FONT, fontSize: 11, color: MUTED, valign: "middle", align: rtl ? "left" : "right", rtlMode: rtl });
+    });
+    footer(s);
+  }
+
+  // 3) per project: a title slide, then its sections (long sections continue on the next slide)
+  for (const { p, people, sections } of data) {
+    const col = hex(p.color);
+    {
+      const s = pres.addSlide(); pageNo++;
+      s.background = { data: brandBackdrop(rtl, "#" + col) };
+      s.addShape(pres.ShapeType.roundRect, { x: rtl ? W - M - 0.16 : M, y: 2.35, w: 0.16, h: 2.3, fill: { color: col }, rectRadius: 0.06, line: { type: "none" } });
+      const tx0 = rtl ? M : M + 0.45, tw = W - 2 * M - 0.45;
+      s.addText(tx("المشروع"), { x: tx0, y: 2.25, w: tw, h: 0.45, fontFace: FONT, fontSize: 14, color: "BFD6F2", align: pageAlign, rtlMode: rtl, charSpacing: 1 });
+      s.addText(p.name, { x: tx0, y: 2.7, w: tw, h: 1.3, fontFace: FONT, fontSize: 44, bold: true, color: "FFFFFF", valign: "top", fit: "shrink", ...dirOf(p.name), align: pageAlign });
+      const lead = profile(p.lead_id)?.full_name;
+      // one fact per line so Arabic and English names never get mixed up in one line
+      [period, lead ? `${tx("المسؤول")}: ${lead}` : null, tx("{n} شاركوا", { n: people })].filter(Boolean).forEach((line, i) =>
+        s.addText(line, { x: tx0, y: 4.1 + i * 0.42, w: tw, h: 0.4, fontFace: FONT, fontSize: 15, color: i ? "BFD6F2" : "D6E6FA", align: pageAlign, rtlMode: rtl }));
+      s.addImage({ data: logo, x: rtl ? M : W - M - 1.5, y: H - 0.95, w: 1.5, h: 1.5 * 162 / 440 });
+    }
+    const filled = sections.filter((x) => x.items.length);
+    const empty = sections.filter((x) => !x.items.length);
+    for (const sec of filled) {
+      // paginate by an estimate of wrapped lines
+      const pages = []; let cur = [], lines = 0;
+      for (const it of sec.items) {
+        const n = Math.max(1, Math.ceil((it.t.length + it.who.length + 4) / 95));
+        if (cur.length && lines + n > 10) { pages.push(cur); cur = []; lines = 0; }
+        cur.push(it); lines += n;
+      }
+      if (cur.length) pages.push(cur);
+      pages.forEach((items, pi) => {
+        const s = pres.addSlide(); s.background = { color: "FFFFFF" };
+        const sc = SEC[sec.k] || "0656A3";
+        s.addShape(pres.ShapeType.rect, { x: rtl ? W - 0.12 : 0, y: 0, w: 0.12, h: H, fill: { color: col }, line: { type: "none" } });
+        s.addText(p.name, { x: M, y: 0.42, w: W - 2 * M, h: 0.35, fontFace: FONT, fontSize: 12, bold: true, color: col, ...dirOf(p.name), align: pageAlign });
+        s.addText(sec.label.toUpperCase() + (pages.length > 1 ? `  (${pi + 1}/${pages.length})` : ""), { x: M, y: 0.78, w: W - 2 * M, h: 0.7, fontFace: FONT, fontSize: 28, bold: true, color: INK, align: pageAlign, charSpacing: 1 });
+        s.addShape(pres.ShapeType.roundRect, { x: rtl ? W - M - 0.9 : M, y: 1.5, w: 0.9, h: 0.07, fill: { color: sc }, rectRadius: 0.03, line: { type: "none" } });
+        const paras = [];
+        items.forEach((it, i) => {
+          const d = dirOf(it.t);
+          paras.push({ text: it.t, options: { ...d, bullet: { code: "25CF", indent: 18 }, color: INK, fontSize: 16, breakLine: false, paraSpaceBefore: i ? 9 : 0 } });
+          paras.push({ text: `   — ${it.who}${it.auto ? " · " + tx("تلقائي") : ""}`, options: { ...d, color: MUTED, fontSize: 12, breakLine: true } });
+        });
+        s.addText(paras, { x: M, y: 1.85, w: W - 2 * M, h: H - 2.65, fontFace: FONT, valign: "top", lineSpacingMultiple: 1.12, fit: "shrink" });
+        footer(s, p.name);
+      });
+    }
+    if (empty.length && filled.length) {
+      // one calm line at the end of the project for sections nobody filled
+      const last = pres.addSlide(); last.background = { color: "FFFFFF" };
+      last.addShape(pres.ShapeType.rect, { x: rtl ? W - 0.12 : 0, y: 0, w: 0.12, h: H, fill: { color: col }, line: { type: "none" } });
+      last.addText(p.name, { x: M, y: 0.42, w: W - 2 * M, h: 0.35, fontFace: FONT, fontSize: 12, bold: true, color: col, ...dirOf(p.name), align: pageAlign });
+      last.addText(tx("أقسام من غير تحديثات الفترة دي"), { x: M, y: 0.78, w: W - 2 * M, h: 0.7, fontFace: FONT, fontSize: 24, bold: true, color: INK, align: pageAlign, rtlMode: rtl });
+      empty.forEach((e, i) => {
+        const x = rtl ? W - M - (i + 1) * 2.55 + 0.25 : M + i * 2.55;
+        last.addShape(pres.ShapeType.roundRect, { x, y: 1.9, w: 2.3, h: 0.7, fill: { color: "F6F8FC" }, line: { color: LINE, width: 0.75 }, rectRadius: 0.12 });
+        last.addText(e.label, { x, y: 1.9, w: 2.3, h: 0.7, fontFace: FONT, fontSize: 14, bold: true, color: SEC[e.k] || INK, align: "center", valign: "middle" });
+      });
+      footer(last, p.name);
+    }
+  }
+
+  // 4) closing
+  {
+    const s = pres.addSlide(); s.background = { data: bgTitle };
+    s.addImage({ data: logo, x: (W - 3) / 2, y: 2.3, w: 3, h: 3 * 162 / 440 });
+    s.addText(tx("شكراً"), { x: M, y: 3.6, w: W - 2 * M, h: 0.9, fontFace: FONT, fontSize: 36, bold: true, color: "FFFFFF", align: "center", rtlMode: rtl });
+    s.addText(`Digital Team  ·  ${period}`, { x: M, y: 4.45, w: W - 2 * M, h: 0.5, fontFace: FONT, fontSize: 14, color: "BFD6F2", align: "center", rtlMode: rtl });
+  }
+  await pres.writeFile({ fileName: fname + ".pptx" });
 }
 
 // one document: project name, then its 4 sections with everyone's points
