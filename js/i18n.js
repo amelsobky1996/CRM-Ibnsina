@@ -43,6 +43,8 @@ const EN = {
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
   "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "اخترت {n}": "{n} selected",
+  "مختارتش حد لسه": "No one selected",
   "تاريخ البداية": "Start date",
   "تاريخ النهاية": "End date",
   "تاريخ النهاية لازم يكون بعد تاريخ البداية أو في نفس اليوم": "The end date must be on or after the start date",

@@ -948,9 +948,9 @@ function closeModal() {
   ov.classList.add("closing");
   setTimeout(() => { if (ov.isConnected) $("#modal-root").innerHTML = ""; flushCoreRepaint(); }, 200);
 }
-function openModal(html, { drawer = false, label = "" } = {}) {
+function openModal(html, { drawer = false, label = "", wide = false } = {}) {
   cleanupDrawer();
-  $("#modal-root").innerHTML = `<div class="overlay ${drawer ? "drawer" : ""}" role="dialog" aria-modal="true" aria-label="${esc(label)}">${drawer ? `<div class="panel">${html}</div>` : `<div class="modal">${html}</div>`}</div>`;
+  $("#modal-root").innerHTML = `<div class="overlay ${drawer ? "drawer" : ""}" role="dialog" aria-modal="true" aria-label="${esc(label)}">${drawer ? `<div class="panel">${html}</div>` : `<div class="modal ${wide ? "wide" : ""}">${html}</div>`}</div>`;
   document.body.style.overflow = "hidden";
   const ov = $("#modal-root .overlay");
   ov.addEventListener("mousedown", (e) => { if (e.target === ov) closeModal(); });
@@ -972,13 +972,16 @@ function peoplePicker(selected) {
   const me = state.me.id;
   people.sort((a, b) => (b.id === me) - (a.id === me) || a.full_name.localeCompare(b.full_name, "ar"));
   return `
-    <div class="input-icon people-search">${icon("search", "sm")}<input class="input" type="search" placeholder="ابحث باسم الموظف" data-people-search></div>
-    <div class="people-pick">
+    <div class="pick-tools">
+      <div class="input-icon people-search">${icon("search", "sm")}<input class="input" type="search" placeholder="ابحث باسم الموظف" data-people-search></div>
+      <span class="pick-count" data-pick-count></span>
+    </div>
+    <div class="pick-grid">
       ${people.map((p) => `
-        <label data-name="${esc(p.full_name.toLowerCase())}">
+        <label class="pick-p" data-name="${esc(p.full_name.toLowerCase())}">
           <input type="checkbox" name="assignee" value="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
-          ${avatar(p, "sm")}<span>${esc(p.full_name)}${p.id === me ? " " + tx("(أنا)") : ""}</span>
-          <small>${esc(p.job_title || "")}</small>
+          ${avatar(p)}<span class="tp-name"><b>${esc(p.full_name)}${p.id === me ? " " + tx("(أنا)") : ""}</b><small>${esc(p.job_title || "")}</small></span>
+          <span class="pick-mark">${icon("check", "sm")}</span>
         </label>`).join("")}
     </div>`;
 }
@@ -987,8 +990,12 @@ function wirePeopleSearch(root) {
   if (!s) return;
   s.oninput = () => {
     const q = s.value.trim().toLowerCase();
-    $$(".people-pick label", root).forEach((l) => l.hidden = q && !l.dataset.name.includes(q));
+    $$(".pick-grid label, .people-pick label", root).forEach((l) => l.hidden = q && !l.dataset.name.includes(q));
   };
+  const cnt = $("[data-pick-count]", root), grid = $(".pick-grid", root);
+  if (!cnt || !grid) return;
+  const count = () => { const n = $$(".pick-grid input:checked", root).length; cnt.textContent = n ? tx("اخترت {n}", { n }) : tx("مختارتش حد لسه"); cnt.classList.toggle("none", !n); };
+  grid.addEventListener("change", count); count();
 }
 
 function checkFileSize(file) {
@@ -1013,14 +1020,14 @@ function openNewTask(status = "todo", colId = null) {
     <h2>مهمة جديدة${col ? ` <span class="pill s-col" style="--sc:${esc(col.color)}">${esc(col.name)}</span>` : status !== "todo" && STATUS[status] ? ` <span class="pill s-${status}">${STATUS[status]}</span>` : ""}</h2>
     <form id="nt">
       <label class="field"><span>عنوان المهمة</span><input class="input" name="title" maxlength="200" required></label>
-      <label class="field"><span>المشروع</span><select class="input" name="project_id">${projectOptions(state.view.project)}</select></label>
-      <label class="field"><span>التفاصيل</span><textarea class="input" name="description"></textarea></label>
-      <div class="row2">
+      <label class="field"><span>التفاصيل</span><textarea class="input" name="description" rows="3"></textarea></label>
+      <div class="row4">
+        <label class="field"><span>المشروع</span><select class="input" name="project_id">${projectOptions(state.view.project)}</select></label>
+        <label class="field"><span>الأولوية</span>
+          <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <label class="field"><span>${tx("تاريخ البداية")}</span><input class="input" type="date" name="start_date" value="${cairoToday()}"></label>
         <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" min="${cairoToday()}"></label>
       </div>
-      <label class="field"><span>الأولوية</span>
-        <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <div class="field"><span>إسناد إلى</span>${peoplePicker([state.me.id])}</div>
       ${state.linksReady && state.tasks.length ? `<div class="field" id="nt-links"><span>${tx("ربط بمهمة تانية (اختياري)")}</span><div class="link-list"></div>${linkAddHtml()}</div>` : ""}
       <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">${tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB })}</span><input type="file" multiple name="files"></label>
@@ -1030,7 +1037,7 @@ function openNewTask(status = "todo", colId = null) {
         <button type="button" class="btn ghost" data-close>إلغاء</button>
         <button class="btn primary" type="submit">إنشاء المهمة</button>
       </div>
-    </form>`, { label: "مهمة جديدة" });
+    </form>`, { label: "مهمة جديدة", wide: true });
   wirePeopleSearch(ov);
   $("[data-close]", ov).onclick = closeModal;
   wireDateRange(ov);

@@ -1641,3 +1641,32 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 @media (max-width: 560px) { .link-add { grid-template-columns: 1fr; } .link-row { flex-wrap: wrap; } .link-open { flex-basis: calc(100% - 40px); order: 2; } }
 .link-row .sub-del { opacity: 1; visibility: visible; flex: none; }
 .confirm-ico.good { background: color-mix(in srgb, #17996A 14%, transparent); color: #128257; }
+
+/* ===== Wide "new task" modal + assignee tiles (same look as attendance) ===== */
+.modal.wide { max-width: 920px; }
+.row4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pick-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.pick-tools .people-search { flex: 1; margin: 0; }
+.pick-count { flex: none; font-size: 12.5px; font-weight: 700; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); padding: 5px 12px; border-radius: 99px; }
+.pick-count.none { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 8px; }
+.pick-p { min-width: 0; }
+.pick-p .tp-name b { unicode-bidi: plaintext; }
+.pick-p { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 14px; border: 1.5px solid var(--line-2); background: var(--card); cursor: pointer; transition: border-color .15s, background .15s, transform .1s; -webkit-user-select: none; user-select: none; }
+.pick-p:hover { border-color: color-mix(in srgb, var(--brand) 40%, var(--line-2)); }
+.pick-p:active { transform: scale(.98); }
+.pick-p[hidden] { display: none; }
+.pick-p input { position: absolute; opacity: 0; pointer-events: none; }
+.pick-p .av { --s: 36px; }
+.pick-mark { width: 24px; height: 24px; flex: none; border-radius: 99px; display: grid; place-items: center; border: 1.5px solid var(--line); color: transparent; transition: background .15s, border-color .15s, color .15s; }
+.pick-p:has(input:checked) { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 7%, var(--card)); }
+.pick-p:has(input:checked) .pick-mark { background: var(--brand); border-color: var(--brand); color: #fff; }
+.pick-p:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .row4 { grid-template-columns: 1fr 1fr; }
+  .pick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .pick-p { padding: 8px; gap: 8px; }
+  .pick-p .av { --s: 30px; }
+  .pick-p .tp-name small { display: none; }
+  .pick-mark { width: 20px; height: 20px; }
+}
