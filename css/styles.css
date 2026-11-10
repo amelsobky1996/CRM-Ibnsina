@@ -1878,3 +1878,14 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 @media (prefers-reduced-motion: reduce) { .new-task-btn::after { animation: none; } }
 @media (max-width: 760px) { .tf { position: static; } .tf-pop { top: calc(100% + 6px); inset-inline: 0; width: auto; } .tf-btn em { display: none; } }
 .page-head:has(.tf) { position: relative; z-index: 20; }
+/* "New task" keeps moving all the time: glow pulse, sheen sweep, and the plus turning */
+.new-task-btn { animation: nt-glow 2.6s ease-in-out infinite; }
+.new-task-btn::after { animation: nt-sheen 3.2s ease-in-out .6s infinite; }
+.nt-plus { animation: nt-turn 3.2s var(--spring) infinite; }
+.new-task-btn:hover .nt-plus { animation-play-state: paused; }
+@keyframes nt-glow {
+  0%, 100% { box-shadow: 0 6px 16px -6px rgba(6, 86, 163, .55), 0 0 0 0 rgba(8, 112, 200, .45); }
+  50% { box-shadow: 0 10px 24px -8px rgba(6, 86, 163, .65), 0 0 0 7px rgba(8, 112, 200, 0); }
+}
+@keyframes nt-turn { 0%, 55% { transform: rotate(0) scale(1); } 70% { transform: rotate(90deg) scale(1.15); } 85%, 100% { transform: rotate(90deg) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .new-task-btn, .nt-plus { animation: none; } }
