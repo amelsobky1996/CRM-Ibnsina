@@ -1602,3 +1602,41 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .f-project_update, .s-project_update { --tc: #6D28D9; }
 .wu-auto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 .wu-auto .wu-link { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--brand, #0472C4); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+/* ===== Task numbers + links ===== */
+.tno { display: inline-flex; align-items: center; flex: none; font: 600 11.5px/1 "IBM Plex Sans", ui-monospace, monospace; letter-spacing: .02em; color: var(--ink-3); background: var(--line-2); border-radius: 6px; padding: 3px 6px; margin-inline-end: 6px; vertical-align: 1px; }
+.kb-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.kb-top .tno { margin: 0; margin-inline-start: auto; }
+.t-title b .tno { margin-inline-end: 8px; }
+.tno-copy { border: 0; cursor: pointer; font-size: 12.5px; padding: 5px 8px; margin: 0; }
+.tno-copy:hover { color: var(--ink); background: var(--line); }
+.pt-left { display: inline-flex; align-items: center; gap: 8px; }
+.kb-blocked, .kb-links { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; font-size: 11.5px; font-weight: 700; border-radius: 7px; padding: 3px 8px; }
+.kb-blocked { color: #B42318; background: color-mix(in srgb, #D13B47 12%, transparent); }
+.kb-links { color: var(--ink-3); background: var(--line-2); font-weight: 600; }
+.t-title .kb-blocked, .t-title .kb-links { margin-top: 2px; }
+.blocked-banner { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.6; color: #8A1C14; background: color-mix(in srgb, #D13B47 10%, var(--card)); border: 1px solid color-mix(in srgb, #D13B47 30%, transparent); }
+.blocked-banner svg { flex: none; margin-top: 3px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .blocked-banner, :root:not([data-theme="light"]) .kb-blocked { color: #FCA5A5; } }
+:root[data-theme="dark"] .blocked-banner, :root[data-theme="dark"] .kb-blocked { color: #FCA5A5; }
+.link-list { display: grid; gap: 6px; }
+.link-list:not(:empty) { margin-bottom: 10px; }
+.link-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--line-2); border-radius: 10px; min-width: 0; }
+.link-row.done .link-open span:last-child { text-decoration: line-through; color: var(--ink-3); }
+.link-kind { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 7px; }
+.link-kind.k-blocked_by { color: #B42318; background: color-mix(in srgb, #D13B47 11%, transparent); }
+.link-kind.k-follows { color: #5B21B6; background: color-mix(in srgb, #7A4FD0 12%, transparent); }
+:root[data-theme="dark"] .link-kind.k-blocked_by { color: #FCA5A5; } :root[data-theme="dark"] .link-kind.k-follows { color: #C4B5FD; }
+.link-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; border: 0; background: none; padding: 0; font: inherit; color: var(--ink); text-align: start; cursor: pointer; }
+.link-open:disabled { cursor: default; color: var(--ink-2); }
+.link-open span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13.5px; }
+.link-open:not(:disabled):hover span:last-child { color: var(--brand, #0472C4); }
+.link-row .pill { flex: none; }
+.link-add { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; }
+.tp { position: relative; min-width: 0; }
+.tp-results { position: absolute; inset-inline: 0; top: calc(100% + 4px); z-index: 30; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-2); padding: 4px; max-height: 300px; overflow: auto; }
+.tp-hit { display: flex; align-items: center; gap: 4px; width: 100%; padding: 8px; border: 0; background: none; border-radius: 8px; font: inherit; color: var(--ink); text-align: start; cursor: pointer; }
+.tp-hit > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.tp-hit:hover, .tp-hit:focus-visible { background: var(--line-2); }
+@media (max-width: 560px) { .link-add { grid-template-columns: 1fr; } .link-row { flex-wrap: wrap; } .link-open { flex-basis: calc(100% - 40px); order: 2; } }
+.link-row .sub-del { opacity: 1; visibility: visible; flex: none; }

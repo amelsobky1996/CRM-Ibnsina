@@ -359,3 +359,7 @@ create trigger projects_lock_created_by before update on public.projects for eac
 
 -- v17 weekly "Project Update": weekly_updates.project_update + RPC weekly_task_digest(p_start, p_end)
 --   (see supabase/migrations/v17_weekly_project_update.sql). Empty Project Update => filled from the digest.
+
+-- v18 task numbers + links + overdue digest (see supabase/migrations/v18_task_no_links_overdue.sql):
+--   tasks.task_no (identity, unique), public.task_links (task_id, other_id, kind blocked_by|follows),
+--   linked_tasks_brief(uuid[]), weekly_task_digest_v2(p_start, p_end) incl. overdue open tasks.

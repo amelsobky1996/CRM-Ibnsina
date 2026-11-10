@@ -32,6 +32,7 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   logout: '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h11"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
@@ -237,6 +238,7 @@ async function loadTasks() {
     .order("created_at", { ascending: false });
   if (error) throw error;
   state.tasks = data.map((t) => ({ ...t, assignees: (t.task_assignees || []).map((a) => a.user_id) }));
+  await loadLinks();
 }
 
 async function loadStatuses() {
@@ -389,6 +391,7 @@ async function catchUp() {
     RT_FEEDS.filter(([n]) => names.has(n)).forEach(([n, bind]) => rtChannel(n, bind));
   }
   try {
+    coreReload();
     await Promise.all([loadMessages(), loadNotifs(), loadGroups().catch((e) => console.error(e))]);
     renderBell(); renderChatBadges();
     const r = currentRoute();
@@ -403,6 +406,48 @@ let RT_FEEDS = [];
 document.addEventListener("visibilitychange", () => { if (!document.hidden) catchUp(); });
 addEventListener("online", () => catchUp());
 addEventListener("focus", () => { if (chans.some((c) => c.state !== "joined")) catchUp(); });
+// Reload tasks/projects/people and repaint. Never dropped: with a form or task drawer open the
+// data still refreshes, and the page repaints as soon as that window closes.
+let coreRepaintPending = false;
+const coreDataSig = () => JSON.stringify([
+  state.tasks.map((t) => [t.id, t.updated_at, t.assignees.join(","), (state.links || []).length]),
+  state.projects.map((p) => [p.id, p.updated_at || p.name, p.status, p.lead_id]),
+  state.statuses.map((c) => [c.id, c.name, c.color, c.position]),
+  state.profiles.map((p) => [p.id, p.updated_at || p.full_name, p.avatar_url]),
+]);
+function coreReload(force = false) {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(async () => {
+    if (!state.me) return;
+    const before = coreDataSig();
+    try { await Promise.all([loadProfiles(), loadTasks(), loadProjects(), loadStatuses()]); }
+    catch (e) { console.error(e); return; }
+    tasksSig = null;
+    if (coreDataSig() === before && !force) return; // nothing changed: don't disturb the page
+    if (currentRoute().page === "chat") { renderNav(); return; }
+    if ($("#modal-root").innerHTML) { coreRepaintPending = true; renderNav(); return; }
+    state.animate = false; route();
+  }, 400);
+}
+function flushCoreRepaint() {
+  if (!coreRepaintPending || $("#modal-root").innerHTML || !state.me) return;
+  coreRepaintPending = false;
+  if (currentRoute().page !== "chat") { state.animate = false; route(); }
+}
+// Safety net for missed realtime events (phone asleep, flaky network, RLS-filtered inserts):
+// a tiny "what changed" probe on the tasks I can see; reload only when it differs.
+let tasksSig = null;
+async function probeTasks() {
+  if (!state.me || document.hidden) return;
+  const { data, count, error } = await sb.from("tasks").select("id, updated_at", { count: "exact" }).order("updated_at", { ascending: false }).limit(1);
+  if (error) return;
+  const { count: ac } = await sb.from("task_assignees").select("task_id", { count: "exact", head: true });
+  const sig = `${count}|${data?.[0]?.updated_at || ""}|${ac ?? ""}`;
+  if (tasksSig !== null && sig !== tasksSig) coreReload();
+  tasksSig = sig;
+}
+setInterval(probeTasks, 20000);
+
 // safety net: if the chat feed is down, poll for new messages
 setInterval(() => {
   if (!state.me || document.hidden) return;
@@ -413,17 +458,7 @@ setInterval(() => {
 function subscribe() {
   unsubscribeAll();
   rtWanted = true;
-  const reload = () => {
-    clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(async () => {
-      if ($("#modal-root").innerHTML) return; // don't re-render under an open form
-      if (currentRoute().page === "chat") { try { await Promise.all([loadProfiles(), loadTasks(), loadProjects(), loadStatuses()]); renderNav(); } catch (e) { console.error(e); } return; }
-      try {
-        await Promise.all([loadProfiles(), loadTasks(), loadProjects(), loadStatuses()]);
-        state.animate = false; route();
-      } catch (e) { console.error(e); }
-    }, 500);
-  };
+  const reload = () => coreReload();
   const attRefresh = async () => {
     try {
       await loadAttMeta();
@@ -445,6 +480,7 @@ function subscribe() {
     }],
     ["notifs", (ch) => {
       ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async (payload) => {
+        if (["assigned", "completed", "comment", "mention"].includes(payload.new?.type)) coreReload();
         await loadNotifs();
         renderBell(true);
         const n = payload.new && state.notifs.find((x) => x.id === payload.new.id);
@@ -453,7 +489,7 @@ function subscribe() {
       ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async () => { await loadNotifs(); renderBell(); });
     }],
     ["core", (ch) => {
-      for (const table of ["tasks", "task_assignees", "profiles", "projects", "task_statuses"])
+      for (const table of ["tasks", "task_assignees", "task_links", "profiles", "projects", "task_statuses"])
         ch.on("postgres_changes", { event: "*", schema: "public", table }, reload);
     }],
     ["att", (ch) => {
@@ -784,8 +820,8 @@ function renderTasks() {
   else if (v.status === "open") list = list.filter((t) => t.status !== "done");
   else if (v.status !== "all") list = list.filter((t) => t.status === v.status);
   if (v.q) {
-    const q = v.q.toLowerCase();
-    list = list.filter((t) => t.title.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q));
+    const q = v.q.toLowerCase().trim(), qn = q.replace(/^#/, "");
+    list = list.filter((t) => (/^\d+$/.test(qn) && String(t.task_no) === qn) || t.title.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q));
   }
   list = sortTasks(list);
   const board = getView() === "board";
@@ -831,7 +867,7 @@ function renderTasks() {
       </div>`}
       <span class="grow"></span>
       <select class="input" id="proj-filter" aria-label="المشروع">${projectOptions(v.project, { includeArchivedId: v.project, emptyLabel: "كل المشاريع" })}</select>
-      <div class="input-icon search">${icon("search", "sm")}<input class="input" id="q" type="search" placeholder="ابحث في المهام" value="${esc(v.q)}"></div>
+      <div class="input-icon search">${icon("search", "sm")}<input class="input" id="q" type="search" placeholder="${tx("ابحث بالاسم أو رقم المهمة")}" value="${esc(v.q)}"></div>
     </div>
     ${board ? boardHtml(list) : `<div class="list ${state.animate ? "stagger" : ""}">
       ${list.length ? `<div class="list-head"><span>الحالة</span><span>المهمة</span><span>المسؤولين</span><span>الموعد</span><span>الإنجاز</span><span></span></div>` : ""}
@@ -840,7 +876,7 @@ function renderTasks() {
         return `
         <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
           ${statusPill(t)}
-          <span class="t-title"><b>${esc(t.title)}</b>
+          <span class="t-title"><b>${tnoHtml(t)}${esc(t.title)}</b>${linkChipsHtml(t)}
             <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span ${t.created_by ? `data-pid="${esc(t.created_by)}"` : ""}>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
           ${avatarsCell(t.assignees)}
           ${deadlineCell(t)}
@@ -908,9 +944,9 @@ function closeModal() {
   if (!ov) return;
   cleanupDrawer();
   document.body.style.overflow = "";
-  if (reduceMotion) { $("#modal-root").innerHTML = ""; return; }
+  if (reduceMotion) { $("#modal-root").innerHTML = ""; flushCoreRepaint(); return; }
   ov.classList.add("closing");
-  setTimeout(() => { if (ov.isConnected) $("#modal-root").innerHTML = ""; }, 200);
+  setTimeout(() => { if (ov.isConnected) $("#modal-root").innerHTML = ""; flushCoreRepaint(); }, 200);
 }
 function openModal(html, { drawer = false, label = "" } = {}) {
   cleanupDrawer();
@@ -974,6 +1010,7 @@ function openNewTask(status = "todo", colId = null) {
           <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       </div>
       <div class="field"><span>إسناد إلى</span>${peoplePicker([state.me.id])}</div>
+      ${state.linksReady && state.tasks.length ? `<div class="field" id="nt-links"><span>${tx("ربط بمهمة تانية (اختياري)")}</span><div class="link-list"></div>${linkAddHtml()}</div>` : ""}
       <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">${tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB })}</span><input type="file" multiple name="files"></label>
       <div id="nt-progress"></div>
       <p class="err" id="nt-err"></p>
@@ -984,6 +1021,16 @@ function openNewTask(status = "todo", colId = null) {
     </form>`, { label: "مهمة جديدة" });
   wirePeopleSearch(ov);
   $("[data-close]", ov).onclick = closeModal;
+  // links picked before the task exists; saved right after it's created
+  const pendingLinks = [];
+  const ntl = $("#nt-links", ov);
+  const drawPending = () => {
+    if (!ntl) return;
+    $(".link-list", ntl).innerHTML = pendingLinks.map((x, i) => { const o = taskLite(x.otherId); return `<div class="link-row"><span class="link-kind k-${x.kind}">${icon(LINK_KINDS[x.kind].ic, "sm")}${tx(LINK_KINDS[x.kind].out)}</span><span class="link-open">${tnoHtml(o)}<span>${esc(o?.title || "")}</span></span><button type="button" class="sub-del" data-prm="${i}" aria-label="${tx("فك الربط")}">${icon("close", "sm")}</button></div>`; }).join("");
+    $$("[data-prm]", ntl).forEach((b) => b.onclick = () => { pendingLinks.splice(+b.dataset.prm, 1); drawPending(); });
+    wireTaskPicker($(".link-add", ntl), { exclude: new Set(pendingLinks.map((x) => x.otherId)), onPick: (otherId) => { pendingLinks.push({ otherId, kind: $("select[name=link_kind]", ntl).value }); drawPending(); } });
+  };
+  drawPending();
   const fileInput = $("#nt input[name=files]");
   fileInput.onchange = () => {
     $("#nt-files").textContent = fileInput.files.length ? [...fileInput.files].map((f) => f.name).join("، ") : tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB });
@@ -1012,13 +1059,17 @@ function openNewTask(status = "todo", colId = null) {
       if (error) throw error;
       const { error: e2 } = await sb.from("task_assignees").insert(assignees.map((u) => ({ task_id: task.id, user_id: u })));
       if (e2) throw e2;
+      if (pendingLinks.length) {
+        const { error: e3 } = await sb.from("task_links").insert(pendingLinks.map((x) => ({ task_id: task.id, other_id: x.otherId, kind: x.kind })));
+        if (e3) toast(friendly(e3), true);
+      }
       if (fileInput.files.length) {
         $("#nt-progress").innerHTML = `<div class="upload-bar"><i></i></div>`;
         for (const file of fileInput.files) await uploadTaskFile(task.id, file);
       }
       await loadTasks();
       closeModal(); state.animate = true; route();
-      toast("اتعملت المهمة");
+      toast(task.task_no ? tx("اتعملت المهمة #{n}", { n: task.task_no }) : "اتعملت المهمة");
     } catch (ex) {
       err(friendly(ex));
       $("#nt-progress").innerHTML = "";
@@ -1147,9 +1198,10 @@ function openTask(id) {
   const dropText = tx("اسحب الملفات هنا أو اضغط للاختيار (حتى {mb} ميجا)", { mb: MAX_FILE_MB });
   const ov = openModal(`
     <div class="panel-top">
-      ${statusPill(t)}
+      <span class="pt-left">${statusPill(t)}${t.task_no ? `<button type="button" class="tno tno-copy" id="copy-tno" title="${tx("نسخ رقم المهمة")}" dir="ltr">#${t.task_no}</button>` : ""}</span>
       <button class="icon-btn" data-close aria-label="إغلاق" style="color:var(--ink-2)">${icon("close")}</button>
     </div>
+    <div id="blocked-banner"></div>
     <form id="td">
       <input class="title-input" name="title" value="${esc(t.title)}" ${manage ? "" : "disabled"} aria-label="عنوان المهمة" maxlength="200">
       <div class="meta">${tx("أنشأها {name} · {date}", { name: esc(creator?.full_name || "—"), date: fmtDateTime(t.created_at) })}${t.completed_at ? " · " + tx("اكتملت {date}", { date: fmtDateTime(t.completed_at) }) : ""}</div>
@@ -1178,6 +1230,12 @@ function openTask(id) {
 
       ${work ? `<p class="err" id="td-err" style="margin-top:16px"></p>` : ""}
     </form>
+
+    ${state.linksReady ? `<div class="section" id="links-box">
+      <h3>${icon("link", "sm")}${tx("المهام المرتبطة")} <span class="sub-count" id="links-count"></span></h3>
+      <div class="link-list"></div>
+      ${work ? linkAddHtml() : ""}
+    </div>` : ""}
 
     <div class="section">
       <h3>${icon("checklist", "sm")}الخطوات <span class="sub-count" id="sub-count"></span></h3>
@@ -1253,6 +1311,9 @@ function openTask(id) {
   if (del) del.onclick = () => deleteTask(t);
 
   wireDrawerExtras(t, ov, work);
+  wireTaskLinks(t, ov, work);
+  const ct = $("#copy-tno", ov);
+  if (ct) ct.onclick = () => { navigator.clipboard?.writeText("#" + t.task_no).then(() => toast(tx("اتنسخ رقم المهمة")), () => {}); };
 
   const form = $("#td", ov);
   if (!work) return;
@@ -1284,7 +1345,7 @@ function openTask(id) {
         if (rm.length) { const { error: er } = await sb.from("task_assignees").delete().eq("task_id", t.id).in("user_id", rm); if (er) throw er; }
       }
       await loadTasks(); closeModal(); route();
-      toast(kindOf(sv) === "done" && t.status !== "done" ? "برافو! المهمة اكتملت" : "اتحفظت التغييرات");
+      toast(kindOf(sv) === "done" && t.status !== "done" ? (blockedWarn(t) || "برافو! المهمة اكتملت") : "اتحفظت التغييرات", kindOf(sv) === "done" && t.status !== "done" && !!blockedWarn(t));
     } catch (ex) {
       tdErr(friendly(ex)); btn.disabled = false;
     }
@@ -1749,6 +1810,108 @@ function wireDrawerExtras(t, ov, work) {
 }
 
 /* =====================================================================
+   Task numbers + task links (blocked by / follow-up of)
+   ===================================================================== */
+const tnoHtml = (t) => t?.task_no ? `<span class="tno" dir="ltr">#${t.task_no}</span>` : "";
+const LINK_KINDS = {
+  blocked_by: { out: "متوقفة على", in: "مستنياها", ic: "lock" },
+  follows: { out: "تكميلية لـ", in: "ليها تكملة", ic: "link" },
+};
+async function loadLinks() {
+  const { data, error } = await sb.from("task_links").select("*");
+  state.linksReady = !error; // false until DB migration v18 adds the table
+  if (error) { state.links = []; state.linkBrief = new Map(); return; }
+  state.links = data || [];
+  // the other end of a link may be a task I can't open: fetch just its number/title/status
+  const known = new Set(state.tasks.map((t) => t.id));
+  const missing = [...new Set(state.links.flatMap((l) => [l.task_id, l.other_id]))].filter((id) => !known.has(id));
+  state.linkBrief = new Map();
+  if (missing.length) {
+    const { data: brief } = await sb.rpc("linked_tasks_brief", { p_ids: missing });
+    (brief || []).forEach((b) => state.linkBrief.set(b.id, { ...b, hidden: true }));
+  }
+}
+const taskLite = (id) => state.tasks.find((t) => t.id === id) || state.linkBrief?.get(id) || null;
+// every link touching a task, seen from that task's side
+function linksOf(id) {
+  return (state.links || []).filter((l) => l.task_id === id || l.other_id === id).map((l) => {
+    const out = l.task_id === id, otherId = out ? l.other_id : l.task_id;
+    return { l, out, otherId, other: taskLite(otherId), label: LINK_KINDS[l.kind][out ? "out" : "in"], ic: LINK_KINDS[l.kind].ic };
+  });
+}
+// unfinished tasks this one is waiting on
+const blockersOf = (t) => linksOf(t.id).filter((x) => x.out && x.l.kind === "blocked_by" && x.other && x.other.status !== "done");
+
+function linkChipsHtml(t) {
+  const ls = linksOf(t.id);
+  if (!ls.length) return "";
+  const bl = blockersOf(t);
+  if (bl.length) return `<span class="kb-blocked" title="${esc(bl.map((x) => `#${x.other.task_no} ${x.other.title}`).join("\n"))}">${icon("lock", "sm")}${tx("متوقفة على")} <bdi dir="ltr">${bl.map((x) => "#" + x.other.task_no).join(" ")}</bdi></span>`;
+  return `<span class="kb-links" title="${esc(ls.map((x) => `${tx(x.label)} #${x.other?.task_no ?? "?"}`).join("\n"))}">${icon("link", "sm")}${ls.length}</span>`;
+}
+
+// search box that picks a task (by #number or title)
+function wireTaskPicker(root, { exclude = new Set(), onPick }) {
+  const input = $(".tp-input", root), box = $(".tp-results", root);
+  const render = () => {
+    const raw = input.value.trim().toLowerCase().replace(/^#/, "");
+    if (!raw) { box.hidden = true; box.innerHTML = ""; return; }
+    const hits = state.tasks.filter((t) => !exclude.has(t.id) && (String(t.task_no || "") === raw || String(t.task_no || "").startsWith(raw) && /^\d+$/.test(raw) || t.title.toLowerCase().includes(raw)))
+      .sort((a, b) => (String(b.task_no) === raw) - (String(a.task_no) === raw) || (b.task_no || 0) - (a.task_no || 0)).slice(0, 8);
+    box.hidden = false;
+    box.innerHTML = hits.length ? hits.map((t) => `<button type="button" class="tp-hit" data-tp="${t.id}">${tnoHtml(t)}<span>${esc(t.title)}</span>${statusPill(t)}</button>`).join("")
+      : `<p class="meta" style="margin:8px 10px">${tx("مفيش مهمة بالرقم أو الاسم ده")}</p>`;
+    $$("[data-tp]", box).forEach((b) => b.onmousedown = (e) => { e.preventDefault(); input.value = ""; box.hidden = true; onPick(b.dataset.tp); });
+  };
+  input.oninput = render;
+  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("[data-tp]", box)?.dispatchEvent(new MouseEvent("mousedown")); } if (e.key === "Escape" && !box.hidden) { e.stopPropagation(); box.hidden = true; } };
+  input.onblur = () => setTimeout(() => { box.hidden = true; }, 150);
+}
+const linkAddHtml = () => `
+  <div class="link-add">
+    <select class="input" name="link_kind" aria-label="${tx("نوع الربط")}">
+      <option value="blocked_by">${tx("متوقفة على")}</option><option value="follows">${tx("تكميلية لـ")}</option>
+    </select>
+    <div class="tp"><div class="input-icon">${icon("search", "sm")}<input class="input tp-input" placeholder="${tx("رقم المهمة أو اسمها")}" autocomplete="off" aria-label="${tx("رقم المهمة أو اسمها")}"></div><div class="tp-results" hidden></div></div>
+  </div>`;
+
+// drawer section: list + add/remove links
+function wireTaskLinks(t, ov, work) {
+  const box = $("#links-box", ov);
+  if (!box) return;
+  const draw = () => {
+    if (!ov.isConnected) return;
+    const ls = linksOf(t.id), bl = blockersOf(t);
+    $("#links-count", ov).textContent = ls.length || "";
+    $("#blocked-banner", ov).innerHTML = bl.length && t.status !== "done"
+      ? `<div class="blocked-banner">${icon("lock", "sm")}<span>${tx("المهمة دي متوقفة على {list} اللي لسه ماخلصتش", { list: bl.map((x) => `<b dir="ltr">#${x.other.task_no}</b> «${esc(x.other.title)}»`).join("، ") })}</span></div>` : "";
+    $(".link-list", box).innerHTML = ls.length ? ls.map((x) => `
+      <div class="link-row ${x.other?.status === "done" ? "done" : ""}">
+        <span class="link-kind k-${x.l.kind}">${icon(x.ic, "sm")}${tx(x.label)}</span>
+        ${x.other ? `<button type="button" class="link-open" ${x.other.hidden ? "disabled" : `data-lopen="${x.otherId}"`}>${tnoHtml(x.other)}<span>${esc(x.other.title)}</span></button>${x.other.hidden ? `<span class="pill s-${x.other.status}">${STATUS[x.other.status] || ""}</span>` : statusPill(x.other)}`
+          : `<span class="meta" style="margin:0">${tx("مهمة مش متاحة")}</span>`}
+        ${work ? `<button type="button" class="sub-del" data-lrm="${x.l.id}" aria-label="${tx("فك الربط")}" title="${tx("فك الربط")}">${icon("close", "sm")}</button>` : ""}
+      </div>`).join("") : `<p class="meta" style="margin:0">${tx("مش مرتبطة بأي مهمة. اربطها بمهمة متوقفة عليها أو بتكمّلها.")}</p>`;
+    $$("[data-lopen]", box).forEach((b) => b.onclick = () => openTask(b.dataset.lopen));
+    $$("[data-lrm]", box).forEach((b) => b.onclick = async () => {
+      const { error } = await sb.from("task_links").delete().eq("id", b.dataset.lrm);
+      if (error) return toast(friendly(error), true);
+      state.links = state.links.filter((l) => l.id !== b.dataset.lrm); draw();
+    });
+    if (work) {
+      const ex = new Set([t.id, ...ls.map((x) => x.otherId)]);
+      wireTaskPicker($(".link-add", box), { exclude: ex, onPick: async (otherId) => {
+        const kind = $("select[name=link_kind]", box).value;
+        const { data, error } = await sb.from("task_links").insert({ task_id: t.id, other_id: otherId, kind }).select().single();
+        if (error) return toast(error.code === "23505" ? tx("المهمتين مربوطين ببعض بالفعل") : friendly(error), true);
+        state.links.push(data); draw(); toast(tx("اتربطت المهمة"));
+      } });
+    }
+  };
+  draw();
+}
+
+/* =====================================================================
    Kanban board
    ===================================================================== */
 // the board became the default view (Trello-style); reset an older saved "list" choice once
@@ -1759,8 +1922,9 @@ const setView = (v) => { try { localStorage.setItem("dtt.view", v); } catch { /*
 function kbCard(t) {
   const p = project(t.project_id), drag = canWorkOn(t);
   return `<article class="kb-card ${t.status === "done" ? "done" : ""} ${drag ? "can-drag" : ""}" data-id="${t.id}" tabindex="0" role="button" aria-label="${esc(t.title)}" style="${p ? `--c:${esc(p.color)}` : ""}">
-    ${p ? projChip(p) : ""}
+    <div class="kb-top">${p ? projChip(p) : ""}${tnoHtml(t)}</div>
     <b>${esc(t.title)}</b>
+    ${linkChipsHtml(t)}
     <div class="kb-meta">${deadlineCell(t)}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span></div>
     <div class="kb-foot">${avatarsCell(t.assignees)}<span class="progress"><span class="bar ${t.status === "done" ? "done" : ""}"><i style="width:${t.progress}%"></i></span><span class="num">${t.progress}%</span></span></div>
   </article>`;
@@ -2013,8 +2177,9 @@ async function moveTask(id, status) {
   $(`.kb-card[data-id="${id}"]`)?.classList.add("landed");
   const { error } = await sb.from("tasks").update({ status }).eq("id", id);
   if (error) { Object.assign(t, prev); renderTasks(); afterRender(); return toast(friendly(error), true); }
-  if (status === "done") toast("برافو! المهمة اكتملت");
+  if (status === "done") toast(blockedWarn(t) || "برافو! المهمة اكتملت", !!blockedWarn(t));
 }
+const blockedWarn = (t) => { const bl = blockersOf(t); return bl.length ? tx("اتقفلت، بس خلي بالك: كانت متوقفة على {list} ولسه ماخلصتش", { list: bl.map((x) => "#" + x.other.task_no).join(" ") }) : ""; };
 
 async function moveTaskToCol(id, colId) {
   const t = state.tasks.find((x) => x.id === id), c = colById(colId);
@@ -2027,7 +2192,7 @@ async function moveTaskToCol(id, colId) {
   $(`.kb-card[data-id="${id}"]`)?.classList.add("landed");
   const { error } = await sb.from("tasks").update({ status_id: c.id }).eq("id", id);
   if (error) { Object.assign(t, prev); renderTasks(); afterRender(); return toast(friendly(error), true); }
-  if (c.kind === "done" && prev.status !== "done") toast("برافو! المهمة اكتملت");
+  if (c.kind === "done" && prev.status !== "done") toast(blockedWarn(t) || "برافو! المهمة اكتملت", !!blockedWarn(t));
 }
 
 /* =====================================================================
@@ -3662,7 +3827,7 @@ async function groupMetaReload() {
 const WU_FIELDS = [
   ["project_update", "Project Update", "التاسكات اللي خلصت أو قربت تخلص — بتتملى لوحدها من المهام وتقدر تعدّل فيها"],
   ["highs", "Highs", "إيه اللي مشي كويس الأسبوع ده؟"],
-  ["lows", "Lows", "إيه المشاكل أو اللي اتأخر؟"],
+  ["lows", "Lows", "إيه المشاكل أو اللي اتأخر؟ التاسكات المتأخرة بتتكتب هنا لوحدها"],
   ["sprint", "Sprint Updates", "التقدم في السبرنت والمهام اللي اتعملت"],
   ["bugs", "Bugs Updates", "البجز اللي اتحلت أو اللي لسه مفتوحة"],
 ];
@@ -3713,11 +3878,16 @@ async function loadWeekly(week) {
   const per = periodOf(week), last = per.incl ? per.end : addDays(per.end, -1);
   const [{ data, error }, dg] = await Promise.all([
     sb.from("weekly_updates").select("*").eq("week_start", week),
-    sb.rpc("weekly_task_digest", { p_start: week, p_end: last }),
+    sb.rpc("weekly_task_digest_v2", { p_start: week, p_end: last }),
   ]);
   if (error) throw error;
   state.wu.rows = data || []; state.wu.loadedWeek = week;
-  state.wu.digest = dg.error ? [] : dg.data || [];
+  // v2 also returns overdue tasks (DB migration v18); fall back to v1 until it's applied
+  const dg1 = dg.error ? await sb.rpc("weekly_task_digest", { p_start: week, p_end: last }) : null;
+  const raw = (dg1 ? (dg1.error ? [] : dg1.data) : dg.data) || [];
+  // "late" is judged at the period's end, or today while the period is still running
+  const ref = [cairoToday(), addDays(last, 1)].sort()[0];
+  state.wu.digest = raw.map((d) => ({ ...d, late: d.status !== "done" && !!d.deadline && d.deadline < ref, lateDays: d.deadline ? Math.round((new Date(ref) - new Date(d.deadline)) / 864e5) : 0 }));
   if (state.wu.puReady == null) {
     const probe = await sb.from("weekly_updates").select("project_update").limit(1);
     state.wu.puReady = !probe.error;
@@ -3726,14 +3896,21 @@ async function loadWeekly(week) {
 // The Project Update column ships with DB migration v17; until it's applied the section stays hidden.
 const wuFields = () => state.wu.puReady ? WU_FIELDS : WU_FIELDS.filter(([k]) => k !== "project_update");
 const wuText = (r, k) => (r?.[k] || "").trim();
-// "Project Update" lines generated from the tasks assigned to someone in this project & period:
-// finished during the period, or still open with a deadline inside it (or within a week after it).
-function digestItems(pid, uid) { return (state.wu.digest || []).filter((d) => d.project_id === pid && (!uid || d.user_id === uid)); }
-function digestLine(d) {
-  if (d.status === "done") return `✅ ${d.title} — ${tx("اتقفلت {date}", { date: fmtDM(cairoDay(d.completed_at)) })}`;
-  return `⏳ ${d.title} — ${tx(STATUS[d.status] || d.status)} · ${d.progress || 0}%${d.deadline ? " · " + tx("الموعد {date}", { date: fmtDM(d.deadline) }) : ""}`;
+// Lines generated from the tasks assigned to someone in a project & period:
+//  - Project Update: finished during the period, or still open and due inside it (or within a week after it)
+//  - Lows: still open and already past their deadline
+const AUTO_FIELDS = ["project_update", "lows"];
+function digestItems(pid, uid, field = "project_update") {
+  return (state.wu.digest || []).filter((d) => d.project_id === pid && (!uid || d.user_id === uid) && (field === "lows" ? d.late : !d.late));
 }
-const digestText = (pid, uid) => digestItems(pid, uid).map(digestLine).join("\n");
+function digestLine(d) {
+  const no = d.task_no ? `#${d.task_no} ` : "";
+  if (d.status === "done") return `✅ ${no}${d.title} — ${tx("اتقفلت {date}", { date: fmtDM(cairoDay(d.completed_at)) })}`;
+  if (d.late) return `🔴 ${no}${d.title} — ${lateText(d.lateDays)} · ${tx("الموعد {date}", { date: fmtDM(d.deadline) })} · ${d.progress || 0}%`;
+  return `⏳ ${no}${d.title} — ${tx(STATUS[d.status] || d.status)} · ${d.progress || 0}%${d.deadline ? " · " + tx("الموعد {date}", { date: fmtDM(d.deadline) }) : ""}`;
+}
+const lateText = (n) => n <= 1 ? tx("متأخرة يوم") : n === 2 ? tx("متأخرة يومين") : n <= 10 ? tx("متأخرة {n} أيام", { n }) : tx("متأخرة {n} يوم", { n });
+const digestText = (pid, uid, field) => digestItems(pid, uid, field).map(digestLine).join("\n");
 
 async function weeklyRefresh() {
   state.wu.loadedWeek = null;
@@ -3851,9 +4028,9 @@ function weeklyWrite(projects) {
   const row = mine.find((r) => r.project_id === W.project) || {};
   const draftKey = `${W.project}|${W.week}`;
   const draft = W.drafts[draftKey] || {};
-  const autoPU = digestText(W.project, me);
+  const autoOf = Object.fromEntries(AUTO_FIELDS.map((k) => [k, digestText(W.project, me, k)]));
   // an empty Project Update is filled from the tasks (same rule the compiled file uses)
-  const val = (k) => draft[k] ?? (k === "project_update" ? wuText(row, k) || autoPU : row[k] ?? "");
+  const val = (k) => draft[k] ?? (AUTO_FIELDS.includes(k) ? wuText(row, k) || autoOf[k] : row[k] ?? "");
   $("#wu-body").innerHTML = `
     <div class="wu-grid">
       <aside class="wu-projects card-box">
@@ -3866,7 +4043,7 @@ function weeklyWrite(projects) {
         ${wuFields().map(([k, label, hint]) => `
           <label class="field wu-field f-${k}"><span><b class="wu-tag">${label}</b> ${tx(hint)}</span>
             <textarea class="input" name="${k}" rows="4" maxlength="5000" placeholder="${k === "project_update" ? tx("مفيش تاسكات خلصت أو قربت تخلص ليك في المشروع ده الفترة دي — اكتب اللي عملته") : tx("كل نقطة في سطر لوحدها")}">${esc(val(k))}</textarea>
-            ${k === "project_update" && autoPU ? `<span class="wu-auto">${icon("tasks", "sm")}${tx("{n} تاسك من قائمة مهامك", { n: digestItems(W.project, me).length })} <button type="button" class="wu-link" id="wu-refill">${tx("املاها تاني من التاسكات")}</button></span>` : ""}</label>`).join("")}
+            ${autoOf[k] ? `<span class="wu-auto">${icon(k === "lows" ? "flame" : "tasks", "sm")}${tx(k === "lows" ? "{n} تاسك متأخرة من قائمة مهامك" : "{n} تاسك من قائمة مهامك", { n: digestItems(W.project, me, k).length })} <button type="button" class="wu-link" data-refill="${k}">${tx("املاها تاني من التاسكات")}</button></span>` : ""}</label>`).join("")}
         <p class="err" id="wu-err"></p>
         <div class="modal-foot">
           ${row.id ? `<button type="button" class="btn danger ghost" id="wu-del">${icon("trash", "sm")}${tx("مسح تحديثاتي للمشروع ده")}</button>` : ""}
@@ -3878,8 +4055,7 @@ function weeklyWrite(projects) {
   $$("[data-wproj]").forEach((b) => b.onclick = () => { W.project = b.dataset.wproj; weeklyWrite(projects); });
   const form = $("#wu-form");
   form.oninput = () => { W.drafts[draftKey] = Object.fromEntries(wuFields().map(([k]) => [k, form.elements[k].value])); };
-  const refill = $("#wu-refill");
-  if (refill) refill.onclick = () => { form.elements.project_update.value = autoPU; form.oninput(); form.elements.project_update.focus(); };
+  $$("[data-refill]", form).forEach((b) => b.onclick = () => { const k = b.dataset.refill; form.elements[k].value = autoOf[k]; form.oninput(); form.elements[k].focus(); });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const vals = Object.fromEntries(wuFields().map(([k]) => [k, form.elements[k].value.trim()]));
@@ -3909,21 +4085,28 @@ function weeklyCompiled(projects) {
   return projects.map((p) => {
     const rows = W.rows.filter((r) => r.project_id === p.id && wuFields().some(([k]) => wuText(r, k)))
       .sort((a, b) => nameOf(a.user_id).localeCompare(nameOf(b.user_id), "ar"));
-    // anyone who didn't write a Project Update gets one generated from their tasks (one line per task, all its assignees named)
-    const wrote = new Set(rows.filter((r) => wuText(r, "project_update")).map((r) => r.user_id));
-    const byTask = new Map();
-    for (const d of digestItems(p.id)) {
-      if (wrote.has(d.user_id)) continue;
-      const e = byTask.get(d.task_id) || { d, who: [] };
-      e.who.push(nameOf(d.user_id)); byTask.set(d.task_id, e);
-    }
-    const auto = [...byTask.values()].map(({ d, who }) => ({ t: digestLine(d), who: who.filter(Boolean).join("، "), auto: true }));
-    const sections = wuFields().map(([k, label]) => ({ k, label, items: [
+    // anyone who left Project Update / Lows empty gets lines generated from their tasks
+    // (one line per task, all of its assignees named)
+    const people = new Set(rows.map((r) => r.user_id));
+    const autoFor = (k) => {
+      const wrote = new Set(rows.filter((r) => wuText(r, k)).map((r) => r.user_id));
+      const byTask = new Map();
+      for (const d of digestItems(p.id, null, k)) {
+        if (wrote.has(d.user_id)) continue;
+        people.add(d.user_id);
+        const e = byTask.get(d.task_id) || { d, who: [] };
+        e.who.push(nameOf(d.user_id)); byTask.set(d.task_id, e);
+      }
+      return [...byTask.values()].map(({ d, who }) => ({ t: digestLine(d), who: who.filter(Boolean).join("، "), auto: true }));
+    };
+    const fields = wuFields(), keys = fields.map(([k]) => k);
+    const auto = Object.fromEntries(AUTO_FIELDS.filter((k) => keys.includes(k)).map((k) => [k, autoFor(k)]));
+    const sections = fields.map(([k, label]) => ({ k, label, items: [
       ...rows.flatMap((r) => wuLines(r[k] || "").map((t) => ({ t, who: nameOf(r.user_id) }))),
-      ...(k === "project_update" ? auto : []),
+      ...(auto[k] || []),
     ] }));
-    const people = new Set([...rows.map((r) => r.user_id), ...digestItems(p.id).filter((d) => !wrote.has(d.user_id)).map((d) => d.user_id)]);
-    return { p, rows, auto: auto.length, people: people.size, sections };
+    const autoN = Object.values(auto).reduce((n, a) => n + a.length, 0);
+    return { p, rows, auto: autoN, people: people.size, sections };
   }).filter((x) => x.rows.length || x.auto);
 }
 
