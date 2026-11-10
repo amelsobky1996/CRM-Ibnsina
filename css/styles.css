@@ -1710,3 +1710,67 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
   .bell-solo .bell { width: 38px; height: 38px; }
   .acct-menu { position: fixed; top: calc(62px + env(safe-area-inset-top, 0px)); inset-inline-end: 12px; width: min(300px, calc(100vw - 24px)); }
 }
+
+/* =====================================================================
+   Header v3 — modern: deep brand band with the Ibnsina sun motif,
+   glass navigation row with a gliding active pill
+   ===================================================================== */
+.nav-ind { display: none; }
+@media (min-width: 961px) {
+  .side.brand-bg { background: transparent; box-shadow: none; grid-template-rows: 64px 54px; transition: box-shadow .25s; }
+  /* row 1: the brand band */
+  .side::before {
+    content: ""; grid-row: 1; grid-column: 1 / -1; align-self: stretch; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60% 140% at var(--glow-x, 85%) -30%, rgba(255,255,255,.22), transparent 60%),
+      radial-gradient(40% 120% at var(--glow-x2, 30%) 130%, rgba(110, 95, 230, .38), transparent 70%),
+      linear-gradient(100deg, #052B57 0%, #0656A3 40%, #0870C8 72%, #2F6ACB 100%);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.12);
+  }
+  html[dir="ltr"] .side::before { --glow-x: 15%; --glow-x2: 70%; }
+  /* the Ibnsina sun rays, very faint, behind the brand */
+  .side-brand { position: relative; isolation: isolate; padding-inline: 24px 8px; align-self: stretch; overflow: hidden; }
+  .side-brand::before {
+    content: ""; position: absolute; z-index: -1; width: 220px; height: 220px; top: 50%; inset-inline-start: -40px; translate: 0 -50%;
+    background: repeating-conic-gradient(from 0deg, rgba(255,255,255,.09) 0deg 2.2deg, transparent 2.2deg 25.7deg);
+    -webkit-mask: radial-gradient(circle, transparent 0 22%, #000 23% 48%, transparent 70%); mask: radial-gradient(circle, transparent 0 22%, #000 23% 48%, transparent 70%);
+    animation: rays-spin 90s linear infinite; pointer-events: none;
+  }
+  @keyframes rays-spin { to { rotate: 360deg; } }
+  .side-logo { width: 122px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.18)); }
+  .side-product { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; line-height: 1.35; max-width: 150px; opacity: .8; border-inline-start-color: rgba(255,255,255,.28); }
+
+  /* header controls: glass chips */
+  .bell-solo .bell, .acct-btn { background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 4px 14px -6px rgba(0,0,0,.35); backdrop-filter: blur(8px); }
+  .bell-solo .bell:hover, .acct-btn:hover, .acct-btn[aria-expanded="true"] { background: rgba(255,255,255,.18); }
+  .acct-btn .av { box-shadow: 0 0 0 2px rgba(255,255,255,.55); border-radius: 99px; }
+  .bell .badge { box-shadow: 0 0 0 2px #0870C8; }
+
+  /* row 2: glass navigation */
+  .side::after {
+    background: color-mix(in srgb, var(--card) 86%, transparent);
+    -webkit-backdrop-filter: saturate(1.6) blur(16px); backdrop-filter: saturate(1.6) blur(16px);
+    border-bottom: 1px solid var(--line-2);
+  }
+  .side.scrolled { box-shadow: 0 14px 30px -18px rgba(8, 24, 52, .45); }
+  .nav { position: relative; height: 54px; padding: 0 18px; gap: 2px; }
+  .nav a { position: relative; z-index: 1; padding: 9px 14px; border-radius: 12px; font-weight: 500; color: var(--ink-2); transition: color .2s, background .2s; }
+  .nav a .i { color: var(--ink-3); transition: color .2s, transform .25s var(--spring); }
+  .nav a:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
+  .nav a:hover .i { transform: translateY(-1px); }
+  .nav a.on, .nav a.on:hover { background: transparent; color: var(--brand); font-weight: 700; box-shadow: none; }
+  .nav a.on .i { color: var(--brand); }
+  .nav a.on::before { display: none; }
+  .nav-ind {
+    display: block; position: absolute; z-index: 0; inset-inline-start: 0; left: 0; right: auto; top: 50%; height: 38px; margin-top: -19px; width: 0; opacity: 0;
+    border-radius: 12px; pointer-events: none;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--brand) 13%, var(--card)), color-mix(in srgb, var(--brand) 8%, var(--card)));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 22%, transparent), 0 6px 14px -8px color-mix(in srgb, var(--brand) 60%, transparent);
+    transition: transform .42s var(--spring), width .42s var(--spring), opacity .2s;
+  }
+  .nav-ind::after { content: ""; position: absolute; inset-inline: 30%; bottom: -8px; height: 3px; border-radius: 3px 3px 0 0; background: var(--brand); }
+  .nav a .count { background: var(--brand); color: #fff; box-shadow: 0 2px 6px -2px color-mix(in srgb, var(--brand) 70%, transparent); }
+  .nav-more-btn { border-radius: 12px; padding: 9px 14px; }
+  .notif-panel { top: 126px; }
+}
+@media (min-width: 961px) and (prefers-reduced-motion: reduce) { .side-brand::before { animation: none; } .nav-ind { transition: none; } }

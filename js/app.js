@@ -606,7 +606,7 @@ function renderNav() {
   items.push(["org", "الهيكل التنظيمي", "org"]);
   if (isManager()) items.push(["users", "الموظفين", "users"]);
   items.push(["settings", "الإعدادات", "settings"]);
-  $("#nav").innerHTML = items.map(([k, label, ic, n]) =>
+  $("#nav").innerHTML = `<span class="nav-ind" aria-hidden="true"></span>` + items.map(([k, label, ic, n]) =>
     `<a href="#/${k}" class="${r.page === k ? "on" : ""}" ${r.page === k ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${n === "chat" ? `<span class="count chat-count" data-chat-badge hidden></span>` : n ? `<span class="count">${n}</span>` : ""}</a>`).join("");
   // Mobile app tab bar: first four destinations + "More" sheet for the rest
   const primary = items.slice(0, 4), rest = items.slice(4);
@@ -674,8 +674,29 @@ document.addEventListener("click", (e) => {
   if (m && !m.hidden && !e.target.closest(".acct")) { m.hidden = true; $("#acct-btn")?.setAttribute("aria-expanded", "false"); }
 });
 
+// Desktop nav: a pill that glides from the previous page's link to the current one
+let navIndAt = null;
+function placeNavInd() {
+  const nav = $("#nav"), ind = nav && $(".nav-ind", nav);
+  if (!ind) return;
+  const a = $("a.on:not(.nav-ovf)", nav);
+  if (!a || matchMedia("(max-width: 960px)").matches) { ind.style.opacity = "0"; return; }
+  const to = { x: a.offsetLeft, w: a.offsetWidth };
+  if (navIndAt && !reduceMotion) {
+    ind.style.transition = "none";
+    ind.style.transform = `translateX(${navIndAt.x}px)`; ind.style.width = navIndAt.w + "px";
+    void ind.offsetWidth;
+    ind.style.transition = "";
+  }
+  ind.style.opacity = "1";
+  ind.style.transform = `translateX(${to.x}px)`; ind.style.width = to.w + "px";
+  navIndAt = to;
+}
+addEventListener("scroll", () => $(".side")?.classList.toggle("scrolled", scrollY > 6), { passive: true });
+
 // Desktop top bar: links that don't fit move into the "More" dropdown
-function fitNav() {
+function fitNav() { fitNavInner(); placeNavInd(); }
+function fitNavInner() {
   const nav = $("#nav"), more = $("#nav-more"), menu = $("#nav-menu");
   if (!nav || !more) return;
   const links = $$("a", nav);
