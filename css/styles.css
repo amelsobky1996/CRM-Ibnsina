@@ -1774,3 +1774,68 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
   .notif-panel { top: 126px; }
 }
 @media (min-width: 961px) and (prefers-reduced-motion: reduce) { .side-brand::before { animation: none; } .nav-ind { transition: none; } }
+
+/* ===== The header's brand gradient on every filled button / active toggle ===== */
+:root { --brand-grad: linear-gradient(100deg, #052B57 0%, #0656A3 40%, #0870C8 72%, #2F6ACB 100%); }
+.btn.primary, .send-btn.primary {
+  background: var(--brand-grad); background-size: 140% 100%; background-position: 0% 50%;
+  border-color: transparent; color: #fff;
+  box-shadow: 0 6px 16px -6px rgba(6, 86, 163, .55), inset 0 1px 0 rgba(255,255,255,.16);
+  transition: background-position .45s var(--ease), box-shadow .2s, transform .1s, filter .2s;
+}
+.btn.primary:hover { background-position: 100% 50%; filter: none; box-shadow: 0 10px 24px -8px rgba(6, 86, 163, .6), inset 0 1px 0 rgba(255,255,255,.2); }
+.btn.primary:disabled { filter: saturate(.6); opacity: .7; }
+.tabs .pill-bg { background: var(--brand-grad); box-shadow: 0 4px 12px -4px rgba(6, 86, 163, .55); }
+.view-toggle button.on { background: var(--brand-grad); color: #fff; }
+.chip.on { background: var(--brand-grad); border-color: transparent; color: #fff; }
+.day-chip input:checked + span { background: var(--brand-grad); border-color: transparent; }
+.pick-p:has(input:checked) .pick-mark, .choice .tick { background: var(--brand-grad); border-color: transparent; }
+.nav a .count, .nav-menu a .count, .conv-badge, .seg-tabs .n { background: var(--brand-grad); }
+.nav-ind::after { background: var(--brand-grad); }
+.acct-switch { background: var(--brand-grad); color: #fff; }
+/* on the blue hero the main button stays white so it doesn't disappear */
+.home-hero .btn.primary { background: #fff; color: var(--brand); }
+
+/* ===== Glass kanban: frosted columns & cards over soft brand light ===== */
+:root {
+  --glass-col: rgba(255,255,255,.42); --glass-col-bd: rgba(255,255,255,.75);
+  --glass-card: rgba(255,255,255,.74); --glass-card-bd: rgba(255,255,255,.9);
+  --glass-hd: rgba(255,255,255,.35); --board-glow: .26;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --glass-col: rgba(22,32,54,.45); --glass-col-bd: rgba(255,255,255,.09);
+  --glass-card: rgba(30,42,68,.62); --glass-card-bd: rgba(255,255,255,.1);
+  --glass-hd: rgba(255,255,255,.04); --board-glow: .32;
+} }
+:root[data-theme="dark"] {
+  --glass-col: rgba(22,32,54,.45); --glass-col-bd: rgba(255,255,255,.09);
+  --glass-card: rgba(30,42,68,.62); --glass-card-bd: rgba(255,255,255,.1);
+  --glass-hd: rgba(255,255,255,.04); --board-glow: .32;
+}
+.board {
+  padding: 14px; margin: 0; border-radius: 22px; border: 1px solid var(--line-2);
+  background:
+    radial-gradient(38% 60% at 8% 12%, rgb(8 112 200 / var(--board-glow)), transparent 70%),
+    radial-gradient(32% 55% at 52% 92%, rgb(124 92 230 / var(--board-glow)), transparent 70%),
+    radial-gradient(30% 50% at 92% 18%, rgb(14 165 170 / calc(var(--board-glow) * .8)), transparent 70%),
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 5%, var(--bg)), var(--bg));
+}
+.kb-col {
+  background: var(--glass-col); border: 1px solid var(--glass-col-bd);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5); backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 10px 30px -18px rgba(8, 30, 70, .35), inset 0 1px 0 rgba(255,255,255,.5);
+}
+.kb-col header { background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 12%, var(--glass-hd)), var(--glass-hd)); border-top-color: var(--tone); }
+.kb-n { background: var(--glass-card); border: 1px solid var(--glass-card-bd); }
+.kb-card {
+  background: var(--glass-card); border: 1px solid var(--glass-card-bd);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 6px 18px -12px rgba(8, 30, 70, .4), inset 0 1px 0 rgba(255,255,255,.55);
+}
+.kb-card:hover { box-shadow: 0 14px 28px -14px rgba(8, 30, 70, .45), inset 0 1px 0 rgba(255,255,255,.6); }
+.kb-empty { border-color: color-mix(in srgb, var(--ink-3) 30%, transparent); background: rgba(255,255,255,.12); }
+.kb-col.over { background: color-mix(in srgb, var(--tone) 14%, var(--glass-col)); }
+.kb-col-add { background: var(--glass-col); border: 1.5px dashed color-mix(in srgb, var(--ink-3) 40%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+:root[data-theme="dark"] .kb-col, :root[data-theme="dark"] .kb-card { box-shadow: 0 10px 30px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .kb-col, :root:not([data-theme="light"]) .kb-card { box-shadow: 0 10px 30px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06); } }
+@media (max-width: 760px) { .board { padding: 10px; border-radius: 18px; } }
