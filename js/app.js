@@ -2358,19 +2358,19 @@ function renderHome() {
     ${pushPromptHtml()}
     <div class="home-hero">
       <div class="hero-text">
-        <p class="hero-date">${esc(dateLong)}</p>
+        <p class="hero-date">${icon("calendar", "sm")}${esc(dateLong)}</p>
         <h1>${tx("{g}، {name}", { g: tx(greet), name: esc(first) })}</h1>
         <p>${myLate ? tx("عندك {n} مهمة متأخرة، ابدأ بيها.", { n: myLate })
           : myOpen.length ? tx("عندك {n} مهمة مفتوحة ومفيش حاجة متأخرة. كمّل كده!", { n: myOpen.length })
           : tx("مفيش مهام مفتوحة عندك دلوقتي.")}</p>
       </div>
-      <button class="btn primary" id="home-new">${icon("plus")}مهمة جديدة</button>
-    </div>
-    <div class="stats">
-      <a class="stat" href="#/tasks"><div class="ico">${icon("inbox")}</div><b data-count="${myOpen.length}">${myOpen.length}</b><span>مهامك المفتوحة</span></a>
-      <a class="stat t-bad" href="#/tasks"><div class="ico">${icon("flame")}</div><b data-count="${myLate}">${myLate}</b><span>متأخرة</span></a>
-      <a class="stat t-warn" href="#/tasks"><div class="ico">${icon("clock")}</div><b data-count="${dueToday}">${dueToday}</b><span>مطلوبة النهارده</span></a>
-      <div class="stat t-ok" id="my-score"><div class="ico">${icon("target")}</div><b>—</b><span>التزامك بالمواعيد</span></div>
+      <button class="btn hero-new new-task-btn" id="home-new"><span class="nt-plus">${icon("plus")}</span>مهمة جديدة</button>
+      <div class="hero-stats">
+        <a class="hstat" href="#/tasks"><span class="ico">${icon("inbox")}</span><b data-count="${myOpen.length}">${myOpen.length}</b><span>مهامك المفتوحة</span></a>
+        <a class="hstat t-bad ${myLate ? "hot" : ""}" href="#/tasks"><span class="ico">${icon("flame")}</span><b data-count="${myLate}">${myLate}</b><span>متأخرة</span></a>
+        <a class="hstat t-warn" href="#/tasks"><span class="ico">${icon("clock")}</span><b data-count="${dueToday}">${dueToday}</b><span>مطلوبة النهارده</span></a>
+        <div class="hstat t-ok" id="my-score"><span class="ico">${icon("target")}</span><b>—</b><span>التزامك بالمواعيد</span></div>
+      </div>
     </div>
     <div class="home-grid">
       <section class="lb-card">

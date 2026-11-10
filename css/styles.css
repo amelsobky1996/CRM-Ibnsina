@@ -1889,3 +1889,102 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 }
 @keyframes nt-turn { 0%, 55% { transform: rotate(0) scale(1); } 70% { transform: rotate(90deg) scale(1.15); } 85%, 100% { transform: rotate(90deg) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .new-task-btn, .nt-plus { animation: none; } }
+
+/* =====================================================================
+   Home v2 — brand band hero with glass stats, refined cards
+   ===================================================================== */
+.home-hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 18px 24px;
+  padding: 30px 32px 26px; border-radius: 24px; isolation: isolate;
+  background:
+    radial-gradient(55% 120% at 92% -20%, rgba(255,255,255,.22), transparent 60%),
+    radial-gradient(45% 110% at 18% 130%, rgba(124, 92, 230, .42), transparent 70%),
+    var(--brand-grad);
+  box-shadow: 0 24px 50px -26px rgba(6, 60, 130, .75), inset 0 1px 0 rgba(255,255,255,.14);
+}
+html[dir="ltr"] .home-hero { background:
+    radial-gradient(55% 120% at 8% -20%, rgba(255,255,255,.22), transparent 60%),
+    radial-gradient(45% 110% at 82% 130%, rgba(124, 92, 230, .42), transparent 70%),
+    var(--brand-grad); }
+/* the Ibnsina sun, slowly turning in the corner */
+.home-hero::after {
+  content: ""; position: absolute; z-index: -1; inset-inline-end: -70px; top: -70px; bottom: auto; width: 300px; height: 300px; border: 0; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255,255,255,.10) 0deg 2.4deg, transparent 2.4deg 25.7deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 20%, #000 21% 50%, transparent 70%); mask: radial-gradient(circle, transparent 0 20%, #000 21% 50%, transparent 70%);
+  animation: rays-spin 120s linear infinite;
+}
+.home-hero::before { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: linear-gradient(180deg, transparent 55%, rgba(3, 20, 45, .22)); pointer-events: none; }
+.hero-date { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px !important; font-weight: 600; opacity: 1 !important; padding: 4px 12px; border-radius: 99px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); margin-bottom: 10px !important; }
+.home-hero h1 { font-size: 32px; font-weight: 800; letter-spacing: -.01em; margin: 0 0 6px; text-shadow: 0 2px 14px rgba(0,0,0,.18); }
+.home-hero .hero-text > p:last-child { opacity: .88; font-size: 15px; }
+.hero-new { align-self: center; color: #fff; background: rgba(255,255,255,.14); border: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 10px 26px -12px rgba(0,0,0,.45); backdrop-filter: blur(10px); font-weight: 700; padding-inline: 18px 20px; min-height: 46px; }
+.hero-new:hover { background: rgba(255,255,255,.24); }
+.home-hero .new-task-btn { animation: nt-glow-white 2.6s ease-in-out infinite; }
+@keyframes nt-glow-white { 0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 0 0 0 rgba(255,255,255,.35); } 50% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.5), 0 0 0 8px rgba(255,255,255,0); } }
+.hero-stats { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.hstat {
+  position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center;
+  padding: 14px 16px; border-radius: 18px; color: #fff; text-decoration: none;
+  background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), inset 0 1px 0 rgba(255,255,255,.22);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4);
+  transition: background .2s, transform .25s var(--spring);
+  --tone: #9CC9FF;
+}
+a.hstat:hover { background: rgba(255,255,255,.2); transform: translateY(-2px); }
+.hstat .ico { grid-row: 1 / 3; width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; color: #fff; background: color-mix(in srgb, var(--tone) 38%, transparent); box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); }
+.hstat .ico svg { width: 20px; height: 20px; }
+.hstat b { font-size: 28px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.hstat > span:last-child { font-size: 12.5px; opacity: .85; }
+.hstat.t-bad { --tone: #FF8A8A; } .hstat.t-warn { --tone: #FFC861; } .hstat.t-ok { --tone: #5FE0A8; }
+.hstat.hot { background: rgba(255, 90, 95, .22); box-shadow: inset 0 0 0 1px rgba(255,160,160,.45); }
+
+/* cards: softer, rounder, with a gradient icon badge in the title */
+.lb-card, .mini-card { border-radius: 22px; border-color: var(--line-2); box-shadow: 0 1px 2px rgba(16, 32, 64, .04), 0 12px 32px -22px rgba(16, 40, 90, .35); }
+.lb-card { padding: 24px; }
+.mini-card { padding: 20px; }
+.lb-head h2, .mini-card h3 { gap: 10px; }
+.lb-head h2 > svg, .mini-card h3 > svg {
+  box-sizing: content-box; width: 16px; height: 16px; padding: 7px; border-radius: 10px; color: #fff !important;
+  background: var(--brand-grad); box-shadow: 0 6px 14px -6px rgba(6, 86, 163, .6);
+}
+.lb-head h2 { font-size: 19px; font-weight: 800; }
+.mini-card h3 { font-size: 15.5px; font-weight: 800; margin-bottom: 14px; }
+.seg input:checked + span { background: var(--brand-grad); box-shadow: 0 6px 14px -6px rgba(6, 86, 163, .6); }
+.seg.seg-sm { border-radius: 12px; }
+.team-score { border: 0; padding: 18px; border-radius: 18px;
+  background: linear-gradient(120deg, color-mix(in srgb, #0656A3 9%, var(--card)), color-mix(in srgb, #7C5CE6 8%, var(--card)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 16%, transparent); }
+.team-score b { font-size: 17px; font-weight: 800; }
+.lb-row { border-radius: 16px; padding: 12px 14px; }
+.lb-row.me { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 9%, transparent), transparent); }
+.lb-bar { height: 10px; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.lb-bar span { border-radius: 99px; }
+.lb-bar span + span { margin-inline-start: 2px; }
+.seg-ok { background: linear-gradient(90deg, #12B07A, #17996A); }
+.nd-chip { background: var(--card); border-color: var(--line-2); box-shadow: 0 1px 2px rgba(16,32,64,.05); }
+.see-all { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; margin-top: 12px; border-radius: 99px; background: color-mix(in srgb, var(--brand) 8%, transparent); color: var(--brand); font-weight: 700; transition: background .2s; }
+.see-all:hover { background: color-mix(in srgb, var(--brand) 15%, transparent); }
+.see-all::after { content: "←"; font-size: 13px; }
+html[dir="ltr"] .see-all::after { content: "→"; }
+/* points card: the number in the brand gradient */
+.pts-card { position: relative; overflow: hidden; }
+.pts-card .pts-big b { font-size: 46px; background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.pts-card .pts-big.neg b { background: linear-gradient(100deg, #B42318, #E5484D); -webkit-background-clip: text; background-clip: text; }
+.pts-row { border-radius: 14px; padding: 8px 10px; transition: background .2s; }
+.pts-row:hover { background: var(--bg); }
+.pts-row.me { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 11%, transparent), transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 18%, transparent); }
+.next-item { background: var(--card); border-radius: 14px; padding: 12px; box-shadow: 0 1px 2px rgba(16,32,64,.04); }
+.next-item:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--line-2)); box-shadow: 0 10px 22px -16px rgba(6, 86, 163, .55); }
+.lg-row { padding: 6px 0; }
+@media (max-width: 960px) {
+  .home-hero { grid-template-columns: 1fr; padding: 22px 18px 18px; border-radius: 20px; }
+  .home-hero h1 { font-size: 25px; }
+  .hero-new { justify-self: start; }
+  .hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .hstat { padding: 12px; border-radius: 16px; column-gap: 10px; }
+  .hstat .ico { width: 36px; height: 36px; border-radius: 11px; }
+  .hstat b { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { .home-hero::after, .home-hero .new-task-btn { animation: none; } }
+:root[data-theme="dark"] .pts-card .pts-big:not(.neg) b { background: linear-gradient(100deg, #6FB1FF, #A9C8FF); -webkit-background-clip: text; background-clip: text; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pts-card .pts-big:not(.neg) b { background: linear-gradient(100deg, #6FB1FF, #A9C8FF); -webkit-background-clip: text; background-clip: text; } }
