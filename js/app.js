@@ -996,6 +996,17 @@ function checkFileSize(file) {
 }
 
 /* ---------- New task ---------- */
+// end date can't be before the start date
+function wireDateRange(root) {
+  const st = $("input[name=start_date]", root), en = $("input[name=deadline]", root);
+  if (!st || !en) return;
+  const sync = () => { en.min = st.value || ""; if (st.value && en.value && en.value < st.value) en.value = st.value; };
+  st.addEventListener("change", sync); sync();
+}
+// "reached 100%: move it to the done column?"
+async function askMoveToDone() {
+  return confirmDialog({ title: tx("المهمة وصلت 100%"), body: tx("تنقلها لخانة المكتملة؟"), ok: tx("أيوه، انقلها"), cancel: "لأ، سيبها مكانها", danger: false, ic: "check" });
+}
 function openNewTask(status = "todo", colId = null) {
   const col = colId && colById(colId);
   const ov = openModal(`
@@ -1005,10 +1016,11 @@ function openNewTask(status = "todo", colId = null) {
       <label class="field"><span>المشروع</span><select class="input" name="project_id">${projectOptions(state.view.project)}</select></label>
       <label class="field"><span>التفاصيل</span><textarea class="input" name="description"></textarea></label>
       <div class="row2">
-        <label class="field"><span>الموعد النهائي</span><input class="input" type="date" name="deadline"></label>
-        <label class="field"><span>الأولوية</span>
-          <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label class="field"><span>${tx("تاريخ البداية")}</span><input class="input" type="date" name="start_date" value="${cairoToday()}"></label>
+        <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" min="${cairoToday()}"></label>
       </div>
+      <label class="field"><span>الأولوية</span>
+        <select class="input" name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${k === "medium" ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <div class="field"><span>إسناد إلى</span>${peoplePicker([state.me.id])}</div>
       ${state.linksReady && state.tasks.length ? `<div class="field" id="nt-links"><span>${tx("ربط بمهمة تانية (اختياري)")}</span><div class="link-list"></div>${linkAddHtml()}</div>` : ""}
       <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">${tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB })}</span><input type="file" multiple name="files"></label>
@@ -1021,6 +1033,7 @@ function openNewTask(status = "todo", colId = null) {
     </form>`, { label: "مهمة جديدة" });
   wirePeopleSearch(ov);
   $("[data-close]", ov).onclick = closeModal;
+  wireDateRange(ov);
   // links picked before the task exists; saved right after it's created
   const pendingLinks = [];
   const ntl = $("#nt-links", ov);
@@ -1043,12 +1056,14 @@ function openNewTask(status = "todo", colId = null) {
     const assignees = f.getAll("assignee");
     if (!title) return err("اكتب عنوان المهمة");
     if (!assignees.length) return err("اختار شخص واحد على الأقل");
+    if (f.get("start_date") && f.get("deadline") && f.get("deadline") < f.get("start_date")) return err(tx("تاريخ النهاية لازم يكون بعد تاريخ البداية أو في نفس اليوم"));
     try { [...fileInput.files].forEach(checkFileSize); } catch (ex) { return err(ex.message); }
     const btn = e.submitter; btn.disabled = true; btn.textContent = "جاري الحفظ…";
     try {
       const { data: task, error } = await sb.from("tasks").insert({
         title,
         description: String(f.get("description")).trim() || null,
+        start_date: f.get("start_date") || null,
         deadline: f.get("deadline") || null,
         priority: f.get("priority"),
         project_id: f.get("project_id") || null,
@@ -1215,8 +1230,11 @@ function openTask(id) {
           <select class="input" name="priority" ${manage ? "" : "disabled"}>${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${t.priority === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       </div>
       <div class="row2">
-        <label class="field"><span>الموعد النهائي</span><input class="input" type="date" name="deadline" value="${t.deadline || ""}" ${manage ? "" : "disabled"}></label>
-        <div class="field"><span>نسبة الإنجاز</span>
+        <label class="field"><span>${tx("تاريخ البداية")}</span><input class="input" type="date" name="start_date" value="${t.start_date || ""}" ${manage ? "" : "disabled"}></label>
+        <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" value="${t.deadline || ""}" ${manage ? "" : "disabled"}></label>
+      </div>
+      <div class="row2">
+        <div class="field" style="grid-column:1/-1"><span>نسبة الإنجاز</span>
           <div class="range-row"><input type="range" name="progress" min="0" max="100" step="5" value="${t.progress}" ${work ? "" : "disabled"} aria-label="نسبة الإنجاز"><output id="pv">${t.progress}%</output></div>
           <small class="hint" id="pv-hint" hidden>بتتحسب تلقائيًا من الخطوات</small></div>
       </div>
@@ -1273,9 +1291,27 @@ function openTask(id) {
 
   $("[data-close]", ov).onclick = closeModal;
   wirePeopleSearch(ov);
+  wireDateRange(ov);
   const range = $("input[name=progress]", ov), status = $("select[name=status]", ov);
   range.oninput = () => { $("#pv", ov).textContent = range.value + "%"; };
   const kindOf = (v) => colById(v)?.kind || v;
+  // reaching 100% asks whether to move the task to the done column (once per drawer)
+  let askedDone = false;
+  const offerDone = async () => {
+    if (askedDone || !ov.isConnected || kindOf(status.value) === "done") return;
+    askedDone = true;
+    if (!(await askMoveToDone()) || !ov.isConnected) return;
+    const pid = $("select[name=project_id]", ov)?.value || t.project_id;
+    const doneCol = pid && projCols(pid).find((c) => c.kind === "done");
+    const prev = status.value;
+    status.value = doneCol ? doneCol.id : "done";
+    if (!status.value) { status.value = prev; return toast(tx("مفيش عمود للمهام المكتملة في المشروع ده"), true); }
+    range.value = 100; $("#pv", ov).textContent = "100%";
+    const sub = $('button[type=submit][form="td"]', ov);
+    $("#td", ov).requestSubmit(sub || undefined);
+  };
+  range.addEventListener("change", () => { if (Number(range.value) === 100) offerDone(); else askedDone = false; });
+  ov._offerDone = offerDone;
   status.onchange = () => { if (kindOf(status.value) === "done") { range.value = 100; $("#pv", ov).textContent = "100%"; } };
   const projSel = $("select[name=project_id]", ov);
   if (projSel) projSel.onchange = () => {
@@ -1328,6 +1364,8 @@ function openTask(id) {
       patch.title = String(f.get("title")).trim();
       patch.description = String(f.get("description")).trim() || null;
       patch.deadline = f.get("deadline") || null;
+      patch.start_date = f.get("start_date") || null;
+      if (patch.start_date && patch.deadline && patch.deadline < patch.start_date) return tdErr(tx("تاريخ النهاية لازم يكون بعد تاريخ البداية أو في نفس اليوم"));
       patch.priority = f.get("priority");
       patch.project_id = f.get("project_id") || null;
       if (!patch.title) return tdErr("العنوان مطلوب");
@@ -1353,16 +1391,16 @@ function openTask(id) {
 }
 
 /* ---------- Confirm + delete ---------- */
-function confirmDialog({ title, body = "", ok = "تأكيد", danger = true }) {
+function confirmDialog({ title, body = "", ok = "تأكيد", cancel = "إلغاء", danger = true, ic = null }) {
   return new Promise((resolve) => {
     const root = document.createElement("div");
     root.className = "overlay confirm-layer";
     root.setAttribute("role", "alertdialog");
     root.setAttribute("aria-modal", "true");
     root.innerHTML = `<div class="modal confirm">
-        <div class="confirm-ico ${danger ? "bad" : ""}">${icon(danger ? "trash" : "alert")}</div>
+        <div class="confirm-ico ${danger ? "bad" : ic === "check" ? "good" : ""}">${icon(ic || (danger ? "trash" : "alert"))}</div>
         <h2></h2><p></p>
-        <div class="modal-foot"><button class="btn ghost" data-no>إلغاء</button><button class="btn ${danger ? "btn-danger" : "primary"}" data-yes></button></div>
+        <div class="modal-foot"><button class="btn ghost" data-no>${tx(cancel)}</button><button class="btn ${danger ? "btn-danger" : "primary"}" data-yes></button></div>
       </div>`;
     $("h2", root).textContent = title;
     $("p", root).textContent = body;
@@ -1690,7 +1728,11 @@ function wireDrawerExtras(t, ov, work) {
   let subs = [];
   const refreshProgress = async () => {
     const { data } = await sb.from("tasks").select("progress").eq("id", t.id).single();
-    if (data && ov.isConnected) { t.progress = data.progress; range.value = data.progress; $("#pv", ov).textContent = data.progress + "%"; }
+    if (data && ov.isConnected) {
+      const was = t.progress;
+      t.progress = data.progress; range.value = data.progress; $("#pv", ov).textContent = data.progress + "%";
+      if (data.progress === 100 && was !== 100 && work) ov._offerDone?.();
+    }
   };
   const renderSubs = () => {
     if (!ov.isConnected) return;

@@ -363,3 +363,5 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- v18 task numbers + links + overdue digest (see supabase/migrations/v18_task_no_links_overdue.sql):
 --   tasks.task_no (identity, unique), public.task_links (task_id, other_id, kind blocked_by|follows),
 --   linked_tasks_brief(uuid[]), weekly_task_digest_v2(p_start, p_end) incl. overdue open tasks.
+
+-- v19: tasks.start_date (+ check start_date <= deadline). deadline is shown as the task's End date.

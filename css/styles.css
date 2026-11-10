@@ -1640,3 +1640,4 @@ html[lang="en"] .side-me .hdr-lang { font-size: 16px; font-family: "IBM Plex San
 .tp-hit:hover, .tp-hit:focus-visible { background: var(--line-2); }
 @media (max-width: 560px) { .link-add { grid-template-columns: 1fr; } .link-row { flex-wrap: wrap; } .link-open { flex-basis: calc(100% - 40px); order: 2; } }
 .link-row .sub-del { opacity: 1; visibility: visible; flex: none; }
+.confirm-ico.good { background: color-mix(in srgb, #17996A 14%, transparent); color: #128257; }
