@@ -617,24 +617,62 @@ function renderNav() {
   $("#tb-more").onclick = () => openMoreSheet(rest);
   renderChatBadges();
   const me = state.me;
+  // header: notifications on their own, then the account button with a dropdown menu
   $("#side-me").innerHTML = `
-    <button class="avatar-btn" id="me-photo" title="تغيير صورتي" aria-label="تغيير صورتي">${avatar(me)}</button>
-    <div class="who" title="${esc(me.full_name)}"><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></div>
-    <button class="icon-btn hdr-lang" id="hdr-lang" title="${LANG === "en" ? "العربية" : "English"}" aria-label="${LANG === "en" ? "العربية" : "English"}">${LANG === "en" ? "ع" : "EN"}</button>
-    <span id="bell-slot"></span>
-    <button class="icon-btn" id="me-pass" title="تغيير كلمة السر" aria-label="تغيير كلمة السر">${icon("lock")}</button>
-    <button class="icon-btn" id="logout" title="تسجيل الخروج" aria-label="تسجيل الخروج">${icon("logout")}</button>`;
-  $("#logout").onclick = async () => { await dropPushForLogout(); sb.auth.signOut(); };
+    <span id="bell-slot" class="bell-solo"></span>
+    <div class="acct">
+      <button class="acct-btn" id="acct-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu" title="${esc(me.full_name)}">
+        ${avatar(me)}
+        <span class="who"><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></span>
+        <span class="acct-chev">${icon("chev", "sm")}</span>
+      </button>
+      <div class="acct-menu" id="acct-menu" role="menu" hidden>
+        <div class="acct-head">${avatar(me)}<div><b>${esc(me.full_name)}</b><small>${esc(me.job_title || "")}</small></div></div>
+        <button role="menuitem" data-acct="photo">${icon("camera")}<span>${tx("تغيير الصورة الشخصية")}</span></button>
+        <button role="menuitem" data-acct="lang">${icon("globe")}<span>${tx("اللغة")}</span><em>${LANG === "en" ? "English" : "العربية"}</em><span class="acct-switch">${LANG === "en" ? "ع" : "EN"}</span></button>
+        <button role="menuitem" data-acct="pass">${icon("lock")}<span>${tx("تغيير كلمة السر")}</span></button>
+        <hr>
+        <button role="menuitem" data-acct="logout" class="danger">${icon("logout")}<span>${tx("تسجيل الخروج")}</span></button>
+      </div>
+    </div>`;
   renderBell();
-  $("#hdr-lang").onclick = () => { setLang(LANG === "en" ? "ar" : "en"); savePrefs(); state.animate = false; renderShell(); };
   fitNav(); requestAnimationFrame(fitNav);
   document.fonts?.ready.then(fitNav);
-  $("#me-pass").onclick = () => openPasswordModal(me);
-  $("#me-photo").onclick = () => pickFile("image/*", async (file) => {
-    try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
+  const acctBtn = $("#acct-btn"), acctMenu = $("#acct-menu");
+  const closeAcct = () => { acctMenu.hidden = true; acctBtn.setAttribute("aria-expanded", "false"); };
+  acctBtn.onclick = (e) => {
+    e.stopPropagation();
+    const open = acctMenu.hidden;
+    $("#notif-panel") && toggleNotifPanel();
+    acctMenu.hidden = !open; acctBtn.setAttribute("aria-expanded", String(open));
+    if (open) $("[role=menuitem]", acctMenu)?.focus();
+  };
+  acctMenu.onkeydown = (e) => {
+    const items = $$("[role=menuitem]", acctMenu), i = items.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.stopPropagation(); closeAcct(); acctBtn.focus(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus(); }
+  };
+  $$("[data-acct]", acctMenu).forEach((b) => b.onclick = async () => {
+    closeAcct();
+    switch (b.dataset.acct) {
+      case "photo": return changeMyPhoto();
+      case "lang": setLang(LANG === "en" ? "ar" : "en"); savePrefs(); state.animate = false; return renderShell();
+      case "pass": return openPasswordModal(me);
+      case "logout": await dropPushForLogout(); return sb.auth.signOut();
+    }
+  });
+}
+function changeMyPhoto() {
+  const me = state.me;
+  pickFile("image/*", async (file) => {
+    try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; renderShell(); toast("اتغيرت الصورة"); }
     catch (e) { toast(friendly(e), true); }
   });
 }
+document.addEventListener("click", (e) => {
+  const m = $("#acct-menu");
+  if (m && !m.hidden && !e.target.closest(".acct")) { m.hidden = true; $("#acct-btn")?.setAttribute("aria-expanded", "false"); }
+});
 
 // Desktop top bar: links that don't fit move into the "More" dropdown
 function fitNav() {
@@ -684,7 +722,7 @@ function openMoreSheet(rest) {
     </div>`, { label: "المزيد" });
   ov.classList.add("sheet");
   $$(".sheet-list a", ov).forEach((a) => a.addEventListener("click", () => closeModal()));
-  $('[data-act="photo"]', ov).onclick = () => { closeModal(); $("#me-photo")?.click(); };
+  $('[data-act="photo"]', ov).onclick = () => { closeModal(); changeMyPhoto(); };
   $('[data-act="pass"]', ov).onclick = () => { closeModal(); setTimeout(() => openPasswordModal(me), 220); };
   $('[data-act="out"]', ov).onclick = async () => { closeModal(); await dropPushForLogout(); sb.auth.signOut(); };
 }

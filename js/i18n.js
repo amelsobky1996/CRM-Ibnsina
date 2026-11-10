@@ -43,6 +43,7 @@ const EN = {
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
   "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "تغيير الصورة الشخصية": "Change profile photo",
   "اخترت {n}": "{n} selected",
   "مختارتش حد لسه": "No one selected",
   "تاريخ البداية": "Start date",
