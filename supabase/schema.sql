@@ -365,3 +365,9 @@ create trigger projects_lock_created_by before update on public.projects for eac
 --   linked_tasks_brief(uuid[]), weekly_task_digest_v2(p_start, p_end) incl. overdue open tasks.
 
 -- v19: tasks.start_date (+ check start_date <= deadline). deadline is shown as the task's End date.
+
+-- v20 (migrations "v20_description_mentions", "v20b_comment_mentions_reach_desc_mentioned"):
+--   tasks.mentions uuid[] (@mentions in the description). can_work_task(id) = old can_see_task rule (edit rights);
+--   can_see_task(id) = can_work_task OR auth.uid() in tasks.mentions (read + comment + attach).
+--   Write policies on tasks / task_assignees / task_subtasks / task_links use can_work_task.
+--   trigger tasks_mentions_notify -> 'mention' notification for newly mentioned people.

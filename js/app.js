@@ -32,7 +32,6 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
-  spell: '<path d="M4 16l4-10 4 10M5.5 12.5h5"/><path d="M13 15l3 3 5-6"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
   filter: '<path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
@@ -1231,7 +1230,7 @@ async function renderFiles(taskId, box) {
 /* ---------- @mentions in comments ---------- */
 // people who can open this task: its people, their managers up the chain, and admins
 function mentionCandidates(t) {
-  const ids = new Set([t.created_by, ...t.assignees].filter(Boolean));
+  const ids = new Set([t.created_by, ...t.assignees, ...(t.mentions || [])].filter(Boolean));
   for (const id of [...ids]) { let p = profile(id); const seen = new Set(); while (p?.manager_id && !seen.has(p.manager_id)) { seen.add(p.manager_id); ids.add(p.manager_id); p = profile(p.manager_id); } }
   state.profiles.forEach((p) => { if (p.is_admin) ids.add(p.id); });
   ids.delete(state.me.id);
@@ -4469,142 +4468,6 @@ function downloadWord(bodyHtml, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-/* =====================================================================
-   Spell check
-   1) the browser's own checker on every text field (red underline, right-click fixes);
-      `lang` follows what's typed so dictionaries pick Arabic or English
-   2) an optional "Check" button on the focused text box that asks LanguageTool
-      (Arabic + English spelling & grammar) and lets you apply the fixes
-   ===================================================================== */
-const LT_URL = "https://api.languagetool.org/v2/check";
-// the LanguageTool button can be switched off per device (Settings)
-const spellPrefs = () => { try { return { lt: localStorage.getItem("dtt.spellLT") !== "off" }; } catch { return { lt: true }; } };
-const isTextField = (el) => el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && /^(text|search|)$/.test(el.type || "") && !el.readOnly)) && !el.disabled && el.closest("#app, #modal-root");
-const langOf = (text) => { const ar = (text.match(/[؀-ۿ]/g) || []).length, la = (text.match(/[A-Za-z]/g) || []).length; return ar >= la ? (ar ? "ar" : "") : "en"; };
-document.addEventListener("focusin", (e) => {
-  const el = e.target;
-  if (!isTextField(el)) return;
-  el.spellcheck = true;
-  if (!el.hasAttribute("dir")) el.setAttribute("dir", "auto");
-  const l = langOf(el.value); if (l) el.lang = l;
-});
-document.addEventListener("input", (e) => { const el = e.target; if (isTextField(el)) { const l = langOf(el.value); if (l && el.lang !== l) el.lang = l; } spellPlace(); }, true);
-
-// --- LanguageTool button + results panel ---
-let spellEl = null, spellBtn = null, spellPanel = null;
-function spellEnsure() {
-  if (spellBtn) return;
-  spellBtn = document.createElement("button");
-  spellBtn.type = "button"; spellBtn.className = "spell-fab"; spellBtn.hidden = true;
-  spellBtn.innerHTML = `${icon("spell", "sm")}<span>${tx("تدقيق")}</span>`;
-  spellBtn.title = tx("تدقيق إملائي ولغوي (عربي وإنجليزي)");
-  spellBtn.addEventListener("mousedown", (e) => e.preventDefault());
-  spellBtn.onclick = () => spellRun();
-  spellPanel = document.createElement("div");
-  spellPanel.className = "spell-panel"; spellPanel.hidden = true; spellPanel.setAttribute("role", "dialog");
-  spellPanel.addEventListener("mousedown", (e) => { if (!e.target.closest("button")) return; e.preventDefault(); });
-  document.body.append(spellBtn, spellPanel);
-}
-function spellPlace() {
-  if (!spellBtn || !spellEl || !spellEl.isConnected) return spellHide();
-  const r = spellEl.getBoundingClientRect();
-  if (!r.width || r.bottom < 0 || r.top > innerHeight) { spellBtn.hidden = true; return; }
-  const rtl = getComputedStyle(spellEl).direction === "rtl";
-  spellBtn.hidden = spellEl.value.trim().length < 3;
-  const bw = spellBtn.offsetWidth || 72, multi = spellEl.tagName === "TEXTAREA";
-  spellBtn.style.top = (multi ? r.bottom - 32 : r.top + (r.height - 26) / 2) + "px";
-  spellBtn.style.left = (rtl ? r.left + 6 : r.right - bw - 6) + "px";
-  if (!spellPanel.hidden) {
-    const w = Math.min(380, innerWidth - 24);
-    spellPanel.style.width = w + "px";
-    spellPanel.style.left = Math.max(12, Math.min(innerWidth - w - 12, rtl ? r.left : r.right - w)) + "px";
-    const below = r.bottom + 8, h = spellPanel.offsetHeight;
-    spellPanel.style.top = (below + h > innerHeight - 12 && r.top - h - 8 > 12 ? r.top - h - 8 : below) + "px";
-  }
-}
-function spellHide() { if (spellBtn) spellBtn.hidden = true; if (spellPanel) spellPanel.hidden = true; }
-document.addEventListener("focusin", (e) => {
-  if (!spellPrefs().lt) return;
-  const el = e.target;
-  if (spellPanel && spellPanel.contains(el)) return;
-  if (!isTextField(el) || el.type === "search" || el.closest(".tp, .people-search, [data-no-spell]")) { if (el !== spellEl) { spellEl = null; spellHide(); } return; }
-  spellEnsure();
-  if (spellEl !== el) spellPanel.hidden = true;
-  spellEl = el; spellPlace();
-});
-document.addEventListener("focusout", () => setTimeout(() => {
-  const a = document.activeElement;
-  if (a === spellEl || spellPanel?.contains(a) || spellPanel?.matches(":hover")) return;
-  if (spellPanel && !spellPanel.hidden) return; // keep results open until closed
-  spellHide();
-}, 120));
-addEventListener("scroll", () => spellPlace(), true);
-addEventListener("resize", () => spellPlace());
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && spellPanel && !spellPanel.hidden) { e.stopPropagation(); spellPanel.hidden = true; spellEl?.focus(); } }, true);
-
-async function spellRun() {
-  const el = spellEl; if (!el) return;
-  const text = el.value;
-  if (text.length > 18000) return toast(tx("النص طويل أوي للتدقيق مرة واحدة"), true);
-  spellPanel.hidden = false;
-  spellPanel.innerHTML = `<div class="sp-head"><b>${icon("spell", "sm")}${tx("تدقيق إملائي ولغوي")}</b></div><div class="sp-load"><span class="spinner sm"></span>${tx("بيراجع النص…")}</div>`;
-  spellPlace();
-  const lang = langOf(text);
-  const body = new URLSearchParams({ text, language: lang === "ar" ? "ar" : lang === "en" ? "en-US" : "auto", ...(lang ? {} : { preferredVariants: "en-US" }) });
-  let matches;
-  try {
-    const r = await fetch(LT_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-    if (r.status === 429) throw new Error(tx("استخدمت التدقيق كتير في دقيقة واحدة، استنى شوية وجرّب تاني"));
-    if (!r.ok) throw new Error(tx("خدمة التدقيق مش متاحة دلوقتي"));
-    matches = (await r.json()).matches || [];
-  } catch (e) {
-    spellPanel.innerHTML = `<div class="sp-head"><b>${icon("spell", "sm")}${tx("تدقيق إملائي ولغوي")}</b><button type="button" class="icon-btn" data-sp-close aria-label="${tx("إغلاق")}">${icon("close", "sm")}</button></div><p class="sp-msg bad">${esc(e.message?.includes("fetch") ? tx("خدمة التدقيق مش متاحة دلوقتي") : e.message)}</p>`;
-    $("[data-sp-close]", spellPanel).onclick = () => { spellPanel.hidden = true; el.focus(); };
-    return spellPlace();
-  }
-  if (el.value !== text) return spellRun(); // text changed meanwhile
-  spellShow(el, text, matches);
-}
-function spellShow(el, text, matches) {
-  const items = matches.filter((m) => m.length > 0).map((m) => ({ ...m, bad: text.substr(m.offset, m.length) }));
-  const head = `<div class="sp-head"><b>${icon("spell", "sm")}${tx("تدقيق إملائي ولغوي")}</b>
-    ${items.some((m) => m.replacements?.length) ? `<button type="button" class="btn sm" data-sp-all>${tx("صحّح الكل")}</button>` : ""}
-    <button type="button" class="icon-btn" data-sp-close aria-label="${tx("إغلاق")}">${icon("close", "sm")}</button></div>`;
-  spellPanel.innerHTML = head + (items.length ? `<div class="sp-list">${items.map((m, i) => `
-    <div class="sp-item ${m.rule?.issueType === "misspelling" ? "spelling" : "grammar"}">
-      <div class="sp-ctx" dir="auto">${esc(text.slice(Math.max(0, m.offset - 24), m.offset))}<mark>${esc(m.bad)}</mark>${esc(text.slice(m.offset + m.length, m.offset + m.length + 24))}</div>
-      <small dir="auto">${esc(m.message)}</small>
-      <div class="sp-sugs">${(m.replacements || []).slice(0, 4).map((r, j) => `<button type="button" data-sp="${i}:${j}" dir="auto">${esc(r.value) || "␣"}</button>`).join("") || `<span class="meta" style="margin:0">${tx("مفيش اقتراح")}</span>`}
-        <button type="button" class="sp-skip" data-sp-skip="${i}">${tx("تجاهل")}</button></div>
-    </div>`).join("")}</div>`
-    : `<p class="sp-msg ok">${icon("check", "sm")}${tx("مفيش أخطاء، الكلام سليم")}</p>`);
-  // apply one fix; later offsets shift by the length difference
-  const apply = (i, j) => {
-    const m = items[i], rep = m.replacements[j].value;
-    if (el.value.substr(m.offset, m.length) !== m.bad) return toast(tx("النص اتغيّر، دوس تدقيق تاني"), true);
-    el.value = el.value.slice(0, m.offset) + rep + el.value.slice(m.offset + m.length);
-    const d = rep.length - m.length;
-    items.forEach((x, k) => { if (k !== i && x.offset > m.offset) x.offset += d; });
-    items.splice(i, 1);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    spellShow(el, el.value, items);
-  };
-  $$("[data-sp]", spellPanel).forEach((b) => b.onclick = () => { const [i, j] = b.dataset.sp.split(":").map(Number); apply(i, j); });
-  $$("[data-sp-skip]", spellPanel).forEach((b) => b.onclick = () => { items.splice(Number(b.dataset.spSkip), 1); spellShow(el, el.value, items); });
-  const all = $("[data-sp-all]", spellPanel);
-  if (all) all.onclick = () => {
-    // right-to-left so earlier offsets stay valid
-    const fix = items.filter((m) => m.replacements?.length).sort((a, b) => b.offset - a.offset);
-    let v = el.value;
-    for (const m of fix) if (v.substr(m.offset, m.length) === m.bad) v = v.slice(0, m.offset) + m.replacements[0].value + v.slice(m.offset + m.length);
-    el.value = v; el.dispatchEvent(new Event("input", { bubbles: true }));
-    spellShow(el, v, items.filter((m) => !m.replacements?.length));
-    toast(tx("اتصلّح {n} خطأ", { n: fix.length }));
-  };
-  $("[data-sp-close]", spellPanel).onclick = () => { spellPanel.hidden = true; el.focus(); };
-  spellPlace();
-}
-
 function renderSettings() {
   const themes = [
     ["light", "فاتح", ""],
@@ -4645,24 +4508,9 @@ function renderSettings() {
         <div class="set-head"><div class="ico">${icon("bell")}</div><div><h3>إشعارات الجهاز</h3><p>توصلك الرسايل والمهام الجديدة حتى والسستم مقفول.</p></div></div>
         <div class="push-row" id="push-row"></div>
       </section>
-      <section class="set-card">
-        <div class="set-head"><div class="ico">${icon("spell")}</div><div><h3>${tx("التدقيق الإملائي")}</h3><p>${tx("عربي وإنجليزي في كل خانات الكتابة.")}</p></div></div>
-        <label class="switch-row"><span><b>${tx("زرار «تدقيق» الذكي")}</b><small>${tx("بيظهر جوه الخانة وانت بتكتب، ويراجع الإملاء والقواعد عن طريق LanguageTool (النص بيتبعت لسيرفرهم عشان يتراجع).")}</small></span>
-          <input type="checkbox" class="switch" id="spell-lt" ${spellPrefs().lt ? "checked" : ""}></label>
-        <details class="spell-help">
-          <summary>${tx("إزاي أشغّل الخط الأحمر تحت الكلمات الغلط بالعربي؟")}</summary>
-          <ul>
-            <li><b>Chrome:</b> ${tx("الإعدادات ← اللغات ← التدقيق الإملائي ← فعّل «العربية» و«English».")}</li>
-            <li><b>Edge:</b> ${tx("الإعدادات ← اللغات ← فعّل التدقيق الإملائي واختار العربية والإنجليزية.")}</li>
-            <li><b>Firefox:</b> ${tx("كليك يمين جوه أي خانة ← اللغات ← «إضافة قواميس» ونزّل القاموس العربي.")}</li>
-            <li><b>${tx("الموبايل")}:</b> ${tx("الكيبورد بيصحح لوحده، اتأكد إن العربي متضاف في لغات الكيبورد.")}</li>
-          </ul>
-        </details>
-      </section>
       <p class="meta">الإعدادات دي محفوظة مع حسابك، وبتطبق على أي جهاز تدخل منه.</p>
     </div>`;
   fillPushRow();
-  $("#spell-lt").onchange = (e) => { try { localStorage.setItem("dtt.spellLT", e.target.checked ? "on" : "off"); } catch {} if (!e.target.checked) spellHide(); toast(tx("اتحفظت الإعدادات")); };
   $$("[data-lang]").forEach((b) => b.onclick = () => {
     if (b.dataset.lang === LANG) return;
     setLang(b.dataset.lang);
