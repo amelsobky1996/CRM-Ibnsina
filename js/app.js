@@ -33,6 +33,8 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  sort: '<path d="M7 4v16M4 7l3-3 3 3M14 6h7M14 12h5M14 18h3"/>',
+  grip: '<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
   filter: '<path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -274,7 +276,8 @@ const statusPill = (t) => {
 };
 
 async function loadProjects() {
-  const { data, error } = await sb.from("projects").select("*").order("created_at", { ascending: false });
+  // the admin's order (projects.position) is the order everywhere
+  const { data, error } = await sb.from("projects").select("*").order("position", { ascending: true }).order("created_at", { ascending: false });
   if (error) throw error;
   state.projects = data;
   state.projById = new Map(data.map((p) => [p.id, p]));
@@ -422,7 +425,7 @@ addEventListener("focus", () => { if (chans.some((c) => c.state !== "joined")) c
 let coreRepaintPending = false;
 const coreDataSig = () => JSON.stringify([
   state.tasks.map((t) => [t.id, t.updated_at, t.assignees.join(","), (state.links || []).length]),
-  state.projects.map((p) => [p.id, p.updated_at || p.name, p.status, p.lead_id]),
+  state.projects.map((p) => [p.id, p.updated_at || p.name, p.status, p.lead_id, p.position]),
   state.statuses.map((c) => [c.id, c.name, c.color, c.position]),
   state.profiles.map((p) => [p.id, p.updated_at || p.full_name, p.avatar_url]),
 ]);
@@ -1571,6 +1574,7 @@ function renderProjects() {
       <div><h1>المشاريع</h1><p>${tx("{n} مشروع نشط", { n: active.length })}${archived.length ? " · " + tx("{n} مؤرشف", { n: archived.length }) : ""}</p></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         ${archived.length ? `<label class="check" style="margin:0"><input type="checkbox" id="show-arch" ${state.showArchived ? "checked" : ""}> إظهار المؤرشفة</label>` : ""}
+        ${state.me.is_admin && all.length > 1 ? `<button class="btn" id="order-proj">${icon("sort")}${tx("ترتيب المشاريع")}</button>` : ""}
         ${canCreate ? `<button class="btn primary" id="new-proj">${icon("plus")}مشروع جديد</button>` : ""}
       </div>
     </div>
@@ -1584,7 +1588,7 @@ function renderProjects() {
           ${canEditProject(p) ? `<button class="proj-edit" data-edit-proj="${p.id}" title="تعديل المشروع" aria-label="تعديل المشروع">${icon("edit", "sm")}<span>تعديل</span></button>` : ""}
           <div class="proj-top">
             ${ring(s.progress, p.color)}
-            <div class="grow"><h3>${esc(p.name)}</h3><p>${esc(p.description || (p.status === "archived" ? "مشروع مؤرشف" : "بدون وصف"))}</p></div>
+            <div class="grow"><h3><span class="proj-no">${String(all.indexOf(p) + 1).padStart(2, "0")}</span>${esc(p.name)}</h3><p>${esc(p.description || (p.status === "archived" ? "مشروع مؤرشف" : "بدون وصف"))}</p></div>
           </div>
           <div class="proj-meta">
             <span>${icon("inbox", "sm")}${tx("{n} مفتوحة", { n: s.open })}</span>
@@ -1600,6 +1604,7 @@ function renderProjects() {
     </div>` : `<div class="empty"><div class="ill">${icon("projects")}</div><b>مفيش مشاريع لسه</b>${canCreate ? 'اضغط "مشروع جديد" وابدأ تنظم مهام الفريق.' : "المدير هو اللي بيضيف المشاريع."}</div>`}`;
 
   const np = $("#new-proj"); if (np) np.onclick = () => openProjectModal();
+  const op = $("#order-proj"); if (op) op.onclick = openProjectOrder;
   const sa = $("#show-arch"); if (sa) sa.onchange = (e) => { state.showArchived = e.target.checked; state.animate = true; route(); };
   $$("[data-proj]").forEach((c) => {
     const go = () => { location.hash = `#/tasks?project=${c.dataset.proj}`; };
@@ -1607,6 +1612,70 @@ function renderProjects() {
     c.onkeydown = (e) => { if (e.key === "Enter" && e.target === c) go(); };
   });
   $$("[data-edit-proj]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); openProjectModal(project(b.dataset.editProj)); });
+}
+
+// Admin: drag (or use the arrows) to set the project order; it's used on every page
+function openProjectOrder() {
+  let list = [...state.projects];
+  const ov = openModal(`
+    <h2>${tx("ترتيب المشاريع")}</h2>
+    <p class="meta" style="margin:-4px 0 14px">${tx("اسحب المشروع أو استخدم الأسهم. الترتيب ده هيظهر بيه في كل السستم: المهام، والتقرير الأسبوعي، والملفات.")}</p>
+    <ol class="po-list" id="po-list"></ol>
+    <p class="err" id="po-err"></p>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>إلغاء</button>
+      <button type="button" class="btn primary" id="po-save">${icon("check", "sm")}${tx("حفظ الترتيب")}</button>
+    </div>`, { label: tx("ترتيب المشاريع") });
+  const box = $("#po-list", ov);
+  const draw = (focusId) => {
+    box.innerHTML = list.map((p, i) => `
+      <li class="po-row ${p.status === "archived" ? "archived" : ""}" data-id="${p.id}" style="--c:${esc(p.color || "#0B6FC4")}">
+        <span class="po-grip" aria-hidden="true">${icon("grip", "sm")}</span>
+        <b class="po-no">${String(i + 1).padStart(2, "0")}</b>
+        <i class="po-dot"></i>
+        <span class="po-name">${esc(p.name)}${p.status === "archived" ? ` <small>${tx("(مؤرشف)")}</small>` : ""}</span>
+        <button type="button" class="icon-btn" data-up="${i}" ${i ? "" : "disabled"} aria-label="${tx("لفوق")}">${icon("chev", "sm")}</button>
+        <button type="button" class="icon-btn po-down" data-down="${i}" ${i < list.length - 1 ? "" : "disabled"} aria-label="${tx("لتحت")}">${icon("chev", "sm")}</button>
+      </li>`).join("");
+    const move = (i, d) => { const [x] = list.splice(i, 1); list.splice(i + d, 0, x); draw(x.id); };
+    $$("[data-up]", box).forEach((b) => b.onclick = () => move(+b.dataset.up, -1));
+    $$("[data-down]", box).forEach((b) => b.onclick = () => move(+b.dataset.down, 1));
+    if (focusId) { const r = $(`[data-id="${focusId}"]`, box); r?.classList.add("moved"); r?.scrollIntoView({ block: "nearest" }); }
+  };
+  // pointer drag on the grip: swap with neighbours as the row passes their middle
+  box.addEventListener("pointerdown", (e) => {
+    const grip = e.target.closest(".po-grip"); if (!grip) return;
+    const row = grip.closest(".po-row"); e.preventDefault();
+    row.classList.add("dragging"); row.setPointerCapture(e.pointerId);
+    let lastY = e.clientY;
+    const onMove = (ev) => {
+      const dy = ev.clientY - lastY; row.style.transform = `translateY(${dy}px)`;
+      const sib = dy < 0 ? row.previousElementSibling : row.nextElementSibling;
+      if (!sib) return;
+      const sr = sib.getBoundingClientRect(), rr = row.getBoundingClientRect();
+      if ((dy < 0 && rr.top < sr.top + sr.height / 2) || (dy > 0 && rr.bottom > sr.top + sr.height / 2)) {
+        dy < 0 ? sib.before(row) : sib.after(row);
+        lastY = ev.clientY; row.style.transform = "";
+        $$(".po-row", box).forEach((r, i) => { $(".po-no", r).textContent = String(i + 1).padStart(2, "0"); });
+      }
+    };
+    const onUp = () => {
+      row.removeEventListener("pointermove", onMove); row.classList.remove("dragging"); row.style.transform = "";
+      const ids = $$(".po-row", box).map((r) => r.dataset.id);
+      list = ids.map((id) => list.find((p) => p.id === id)); draw(row.dataset.id);
+    };
+    row.addEventListener("pointermove", onMove);
+    row.addEventListener("pointerup", onUp, { once: true });
+    row.addEventListener("pointercancel", onUp, { once: true });
+  });
+  draw();
+  $("[data-close]", ov).onclick = closeModal;
+  $("#po-save", ov).onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    const { error } = await sb.rpc("reorder_projects", { p_ids: list.map((p) => p.id) });
+    if (error) { b.disabled = false; $("#po-err", ov).textContent = friendly(error); return; }
+    await loadProjects(); closeModal(); state.animate = true; route(); toast(tx("اتحفظ ترتيب المشاريع"));
+  };
 }
 
 function openProjectModal(p = null) {
@@ -4068,7 +4137,7 @@ async function renderWeekly() {
   if (!W.week || !periodList().some((p) => p.start === W.week)) W.week = currentPeriod().start;
   W.tab ||= "write";
   if (W.tab === "periods" && !state.me.is_admin) W.tab = "write";
-  const projects = state.projects.filter((p) => p.status !== "archived").sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  const projects = state.projects.filter((p) => p.status !== "archived");
   if (!W.project || !projects.some((p) => p.id === W.project)) W.project = projects[0]?.id || null;
   $("#view").innerHTML = `
     <div class="page-head hero"><div><h1>التقرير الأسبوعي</h1><p>${tx("كل واحد يكتب تحديثاته لكل مشروع، والسستم بيجمعها في ملف واحد. الأسبوع من الاتنين للاتنين، إلا لو الأدمن حدد فترة تانية.")}</p></div>

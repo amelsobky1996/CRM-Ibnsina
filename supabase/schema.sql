@@ -371,3 +371,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 --   can_see_task(id) = can_work_task OR auth.uid() in tasks.mentions (read + comment + attach).
 --   Write policies on tasks / task_assignees / task_subtasks / task_links use can_work_task.
 --   trigger tasks_mentions_notify -> 'mention' notification for newly mentioned people.
+
+-- v21 project order: projects.position (admin-defined, 1..n; new projects go last via trigger projects_position_default);
+--   reorder_projects(uuid[]) admin-only RPC. The app lists projects by position everywhere.
