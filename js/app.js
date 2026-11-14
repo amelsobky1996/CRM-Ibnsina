@@ -164,7 +164,7 @@ const state = {
   tasks: [],
   projects: [],
   projById: new Map(),
-  view: { tab: "mine", status: "all", q: "", user: null, project: "" },
+  view: { tab: null, status: "all", q: "", user: null, project: "" },
   teamDirectOnly: false,
   notifs: [],
   msgs: [],
@@ -871,8 +871,10 @@ function renderTasks() {
   const v = state.view;
   const tabs = [["mine", "مسندة لي"], ["created", "أنشأتها"]];
   if (isManager()) tabs.push(["team", "مهام فريقي"]);
-  tabs.push(["all", "الكل"]);
-  if (!tabs.some(([k]) => k === v.tab)) v.tab = "mine";
+  tabs.push(["all", state.me.is_admin ? tx("كل مهام الموظفين") : "الكل"]);
+  // admins land on everyone's tasks; everybody else on their own
+  const defTab = state.me.is_admin ? "all" : "mine";
+  if (!tabs.some(([k]) => k === v.tab)) v.tab = defTab;
   if (v.project && !project(v.project)) v.project = "";
 
   let base = tasksForTab(v.tab);
@@ -916,7 +918,7 @@ function renderTasks() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${filterProj && canEditProject(filterProj) ? `<button class="btn ghost" id="edit-cur-proj">${icon("edit")}تعديل المشروع</button>` : ""}
         <div class="tf">
-          <button class="btn tf-btn ${v.status !== "all" ? "active" : ""}" id="tf-btn" aria-haspopup="dialog" aria-expanded="false">${icon("filter")}<span>${tx("فلتر")}</span><em>${tabs.find(([k]) => k === v.tab)[1]}${STAT_LABELS[v.status] ? " · " + STAT_LABELS[v.status] : ""}</em></button>
+          <button class="btn tf-btn ${v.status !== "all" || v.user ? "active" : ""}" id="tf-btn" aria-haspopup="dialog" aria-expanded="false">${icon("filter")}<span>${tx("فلتر")}</span><em>${filterUser ? esc(filterUser.full_name.split(" ")[0]) : tabs.find(([k]) => k === v.tab)[1]}${STAT_LABELS[v.status] ? " · " + STAT_LABELS[v.status] : ""}</em></button>
           <div class="tf-pop" id="tf-pop" role="dialog" aria-label="${tx("فلتر")}" hidden>
             <h4>${tx("المهام")}</h4>
             <div class="tf-opts">${tabs.map(([k, l]) => `<button class="tf-opt ${v.tab === k ? "on" : ""}" data-ftab="${k}"><span>${l}</span><b>${tasksForTab(k).length}</b></button>`).join("")}</div>
@@ -925,7 +927,9 @@ function renderTasks() {
               ${[["open", "مفتوحة", "inbox", "", stats.open], ["overdue", "متأخرة", "flame", "t-bad", stats.overdue], ["week", "خلال 7 أيام", "clock", "t-warn", stats.week], ["done", "مكتملة", "check", "t-ok", stats.done]]
                 .map(([k, l, ic, tone, n]) => `<button class="tf-stat ${tone} ${v.status === k ? "on" : ""}" data-fst="${k}" aria-pressed="${v.status === k}"><span class="ico">${icon(ic, "sm")}</span><b>${n}</b><span>${l}</span></button>`).join("")}
             </div>
-            ${v.status !== "all" || v.tab !== "mine" ? `<button class="tf-reset" id="tf-reset">${icon("close", "sm")}${tx("مسح الفلتر")}</button>` : ""}
+            ${isManager() ? `<h4>${tx("الموظف")}</h4>
+            <select class="input" id="tf-user" aria-label="${tx("الموظف")}"><option value="">${tx("كل الموظفين")}</option>${manageable().filter((p) => p.active && p.id !== state.me.id).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar")).map((p) => `<option value="${p.id}" ${v.user === p.id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}</select>` : ""}
+            ${v.status !== "all" || v.tab !== defTab || v.user ? `<button class="tf-reset" id="tf-reset">${icon("close", "sm")}${tx("مسح الفلتر")}</button>` : ""}
           </div>
         </div>
         <button class="btn primary new-task-btn" id="new-task"><span class="nt-plus">${icon("plus")}</span>مهمة جديدة</button>
@@ -972,7 +976,14 @@ function renderTasks() {
   document.addEventListener("click", tfClose, { once: true });
   $$("[data-ftab]", tfPop).forEach((b) => b.onclick = () => { v.tab = b.dataset.ftab; state.animate = true; renderTasks(); afterRender(); $("#tf-btn")?.click(); });
   $$("[data-fst]", tfPop).forEach((b) => b.onclick = () => { v.status = v.status === b.dataset.fst ? "all" : b.dataset.fst; state.animate = true; renderTasks(); afterRender(); $("#tf-btn")?.click(); });
-  const tfr = $("#tf-reset"); if (tfr) tfr.onclick = () => { v.tab = "mine"; v.status = "all"; state.animate = true; renderTasks(); afterRender(); };
+  const tfr = $("#tf-reset"); if (tfr) tfr.onclick = () => { v.tab = defTab; v.status = "all"; if (v.user) { location.hash = "#/tasks" + (v.project ? `?project=${v.project}` : ""); return; } state.animate = true; renderTasks(); afterRender(); };
+  const tfu = $("#tf-user"); if (tfu) tfu.onchange = () => {
+    if (tfu.value) v.tab = "all";
+    const qs = new URLSearchParams();
+    if (tfu.value) qs.set("user", tfu.value);
+    if (v.project) qs.set("project", v.project);
+    location.hash = "#/tasks" + (qs.toString() ? "?" + qs : "");
+  };
   const ecp = $("#edit-cur-proj"); if (ecp) ecp.onclick = () => openProjectModal(filterProj);
   $$("[data-view]").forEach((b) => b.onclick = () => {
     if (b.dataset.view === getView()) return;

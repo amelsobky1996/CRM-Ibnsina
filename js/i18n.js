@@ -43,6 +43,7 @@ const EN = {
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
   "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "كل مهام الموظفين": "All employees' tasks",
   "ترتيب المشاريع": "Project order",
   "اسحب المشروع أو استخدم الأسهم. الترتيب ده هيظهر بيه في كل السستم: المهام، والتقرير الأسبوعي، والملفات.": "Drag a project or use the arrows. This order is used everywhere: tasks, the weekly report and its files.",
   "حفظ الترتيب": "Save order",

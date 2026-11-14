@@ -2101,3 +2101,4 @@ html[dir="rtl"] .dm-chip { padding: 2px 3px 2px 10px; }
 .po-row .icon-btn svg { transform: rotate(90deg); }
 .po-row .po-down svg { transform: rotate(-90deg); }
 .po-row .icon-btn:disabled { opacity: .3; }
+.tf-pop select.input { width: 100%; }
