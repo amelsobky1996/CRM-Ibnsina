@@ -2195,3 +2195,16 @@ html[dir="rtl"] :is(input[type=email], input[type=url], input[type=password], in
 .req-acts { display: flex; gap: 6px; flex: none; }
 @media (max-width: 560px) { .req-note { flex-wrap: wrap; } .req-acts { width: 100%; } .req-acts .btn { flex: 1; justify-content: center; } }
 .t-title .arch-badge { align-self: flex-start; width: fit-content; max-width: 100%; margin-inline-start: 0; margin-top: 2px; }
+
+/* ---------- Profile photo crop ---------- */
+.modal.crop-modal { width: min(420px, calc(100vw - 32px)); text-align: center; }
+.crop-hint { margin: 4px 0 14px; font-size: 13px; color: var(--ink-2); }
+.crop-stage { position: relative; width: min(320px, 100%); aspect-ratio: 1; margin: 0 auto; border-radius: 18px; overflow: hidden; background: #111; cursor: grab; touch-action: none; user-select: none; outline: none; }
+.crop-stage.grab { cursor: grabbing; }
+.crop-stage:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 45%, transparent); }
+.crop-stage canvas { display: block; width: 100%; height: 100%; }
+.crop-ring { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 999px rgba(8, 18, 36, .55); border: 2px solid rgba(255,255,255,.9); }
+.crop-tools { display: flex; align-items: center; gap: 8px; margin: 14px auto 2px; width: min(320px, 100%); }
+.crop-tools input[type=range] { flex: 1; accent-color: var(--brand); }
+.crop-tools .icon-btn { color: var(--ink-2); flex: none; }
+.crop-tools [data-rot] { margin-inline-start: 6px; }

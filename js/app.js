@@ -33,6 +33,8 @@ const ICONS = {
   org: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  rotate: '<path d="M20 12a8 8 0 1 1-2.4-5.7L20 8.6"/><path d="M20 4v4.6h-4.6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
   sort: '<path d="M7 4v16M4 7l3-3 3 3M14 6h7M14 12h5M14 18h3"/>',
@@ -315,6 +317,99 @@ async function resizeImage(file, size = 320) {
   c.getContext("2d").drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
   return new Promise((res) => c.toBlob(res, "image/jpeg", 0.86));
 }
+
+// Crop dialog for profile photos: drag to move, zoom (slider / wheel / pinch), rotate. Resolves a square JPEG Blob or null.
+function cropImage(file) {
+  return new Promise(async (resolve) => {
+    let img;
+    try { img = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+    catch { try { img = await createImageBitmap(file); } catch { toast(tx("الصورة دي مش مدعومة، جرّب صورة JPG أو PNG"), true); return resolve(null); } }
+    const root = document.createElement("div");
+    root.className = "overlay confirm-layer";
+    root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", tx("ظبط الصورة"));
+    root.innerHTML = `<div class="modal confirm crop-modal">
+        <h2>${tx("ظبط الصورة")}</h2>
+        <p class="crop-hint">${tx("اسحب الصورة عشان تحركها، وكبّر أو صغّر لحد ما وشك يبقى في نص الدايرة")}</p>
+        <div class="crop-stage" tabindex="0" aria-label="${tx("اسحب الصورة عشان تحركها")}"><canvas></canvas><div class="crop-ring" aria-hidden="true"></div></div>
+        <div class="crop-tools">
+          <button type="button" class="icon-btn" data-z="-" aria-label="${tx("تصغير")}">${icon("minus", "sm")}</button>
+          <input type="range" min="1" max="4" step="0.01" value="1" aria-label="${tx("تكبير")}">
+          <button type="button" class="icon-btn" data-z="+" aria-label="${tx("تكبير")}">${icon("plus", "sm")}</button>
+          <button type="button" class="icon-btn" data-rot aria-label="${tx("لف الصورة")}" title="${tx("لف الصورة")}">${icon("rotate", "sm")}</button>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn ghost" data-no>${tx("إلغاء")}</button><button type="button" class="btn primary" data-yes>${icon("check", "sm")}<span>${tx("حفظ الصورة")}</span></button></div>
+      </div>`;
+    document.body.append(root);
+    const stage = $(".crop-stage", root), cv = $("canvas", stage), ctx = cv.getContext("2d"), zr = $("input[type=range]", root);
+    let V = 0, dpr = 1, z = 1, rot = 0, ox = 0, oy = 0;
+    const dims = () => (rot % 180 ? [img.height, img.width] : [img.width, img.height]);
+    const base = () => { const [w, h] = dims(); return V / Math.min(w, h); };
+    const clamp = () => {
+      const [w, h] = dims(), k = base() * z;
+      const mx = Math.max(0, (w * k - V) / 2), my = Math.max(0, (h * k - V) / 2);
+      ox = Math.min(mx, Math.max(-mx, ox)); oy = Math.min(my, Math.max(-my, oy));
+    };
+    const paint = (c, size, scale) => {
+      c.save(); c.fillStyle = "#fff"; c.fillRect(0, 0, size, size);
+      c.translate(size / 2 + ox * scale, size / 2 + oy * scale); c.rotate(rot * Math.PI / 180);
+      const k = base() * z * scale; c.scale(k, k);
+      c.imageSmoothingQuality = "high";
+      c.drawImage(img, -img.width / 2, -img.height / 2); c.restore();
+    };
+    const draw = () => { clamp(); paint(ctx, cv.width, dpr); };
+    const fit = () => {
+      V = stage.clientWidth; dpr = Math.min(3, devicePixelRatio || 1);
+      cv.width = cv.height = Math.round(V * dpr); draw();
+    };
+    const setZoom = (nz, cx = 0, cy = 0) => {
+      nz = Math.min(4, Math.max(1, nz));
+      // keep the point under the cursor / fingers still
+      ox = cx - (cx - ox) * nz / z; oy = cy - (cy - oy) * nz / z;
+      z = nz; zr.value = z; draw();
+    };
+    requestAnimationFrame(fit);
+    const onResize = () => fit(); addEventListener("resize", onResize);
+    const pts = new Map(); let pinch = null;
+    const local = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left - V / 2, e.clientY - r.top - V / 2]; };
+    stage.addEventListener("pointerdown", (e) => { stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); stage.classList.add("grab"); });
+    stage.addEventListener("pointermove", (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pts.size === 1) { ox += e.clientX - prev[0]; oy += e.clientY - prev[1]; draw(); return; }
+      const [a, b] = [...pts.values()], dist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const r = stage.getBoundingClientRect(), cx = (a[0] + b[0]) / 2 - r.left - V / 2, cy = (a[1] + b[1]) / 2 - r.top - V / 2;
+      if (pinch) setZoom(pinch.z * dist / pinch.d, cx, cy); else pinch = { d: dist, z };
+    });
+    const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) stage.classList.remove("grab"); };
+    stage.addEventListener("pointerup", up); stage.addEventListener("pointercancel", up);
+    stage.addEventListener("wheel", (e) => { e.preventDefault(); const [cx, cy] = local(e); setZoom(z * Math.exp(-e.deltaY * 0.0015), cx, cy); }, { passive: false });
+    stage.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 30 : 8, m = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key];
+      if (m) { e.preventDefault(); ox += m[0]; oy += m[1]; draw(); }
+      else if (e.key === "+" || e.key === "=") setZoom(z + 0.1); else if (e.key === "-") setZoom(z - 0.1);
+    });
+    zr.oninput = () => setZoom(Number(zr.value));
+    $$("[data-z]", root).forEach((b) => b.onclick = () => setZoom(z + (b.dataset.z === "+" ? 0.25 : -0.25)));
+    $("[data-rot]", root).onclick = () => { rot = (rot + 90) % 360; [ox, oy] = [-oy, ox]; draw(); };
+    const done = (v) => {
+      removeEventListener("resize", onResize); document.removeEventListener("keydown", onKey, true);
+      root.classList.add("closing"); setTimeout(() => root.remove(), reduceMotion ? 0 : 180);
+      img.close?.(); resolve(v);
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); done(null); } else if (e.key === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); $("[data-yes]", root).click(); } };
+    document.addEventListener("keydown", onKey, true);
+    root.addEventListener("mousedown", (e) => { if (e.target === root) done(null); });
+    $("[data-no]", root).onclick = () => done(null);
+    $("[data-yes]", root).onclick = () => {
+      const OUT = 480, oc = document.createElement("canvas"); oc.width = oc.height = OUT;
+      paint(oc.getContext("2d"), OUT, OUT / V);
+      oc.toBlob((b) => done(b), "image/jpeg", 0.9);
+    };
+    setTimeout(() => stage.focus(), 80);
+  });
+}
+// pick a photo, then crop it; calls back with the cropped Blob
+const pickPhoto = (cb) => pickFile("image/*", async (file) => { const b = await cropImage(file); if (b) cb(b); });
 
 async function uploadAvatar(userId, file) {
   const blob = await resizeImage(file);
@@ -694,7 +789,7 @@ function renderNav() {
 }
 function changeMyPhoto() {
   const me = state.me;
-  pickFile("image/*", async (file) => {
+  pickPhoto(async (file) => {
     try { await uploadAvatar(me.id, file); await loadProfiles(); state.animate = false; renderShell(); toast("اتغيرت الصورة"); }
     catch (e) { toast(friendly(e), true); }
   });
@@ -4900,7 +4995,7 @@ function renderSettings() {
     toast(tx("اتحفظت الإعدادات"));
   });
   $("#set-pass").onclick = () => openPasswordModal(state.me);
-  $("#set-photo").onclick = () => pickFile("image/*", async (file) => {
+  $("#set-photo").onclick = () => pickPhoto(async (file) => {
     try { await uploadAvatar(state.me.id, file); await loadProfiles(); state.animate = false; route(); toast("اتغيرت الصورة"); }
     catch (e) { toast(friendly(e), true); }
   });
@@ -5154,7 +5249,7 @@ function openUserModal(user = null) {
       </div>
     </form>`, { label: isNew ? "إضافة موظف" : "تعديل بيانات الموظف" });
   $("[data-close]", ov).onclick = closeModal;
-  $("#uf-photo", ov).onclick = () => pickFile("image/*", (file) => {
+  $("#uf-photo", ov).onclick = () => pickPhoto((file) => {
     photo = file;
     $("#uf-av", ov).innerHTML = `<img class="av lg" src="${URL.createObjectURL(file)}" alt="">`;
   });
