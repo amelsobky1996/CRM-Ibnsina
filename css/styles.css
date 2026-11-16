@@ -2602,3 +2602,44 @@ body[data-page="chat"] .mini-chat { display: none !important; }
 .thread-head .thread-min { margin-inline-start: auto; color: var(--ink-3); }
 .thread-head .thread-min:hover { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .thread-head .thread-min + .thread-clear { margin-inline-start: 0; }
+
+/* =====================================================================
+   Voice notes + edited marker (DB v25)
+   ===================================================================== */
+.composer { position: relative; }
+.mic-btn { color: var(--brand); }
+.rec-bar {
+  position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+  background: var(--card); animation: rec-in .25s var(--ease);
+}
+.rec-bar[hidden] { display: none; }
+@keyframes rec-in { from { opacity: 0; transform: translateY(6px); } }
+.rec-cancel { color: var(--danger); width: 40px; height: 40px; flex: none; border-radius: 50%; }
+.rec-cancel:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #E5484D; flex: none; box-shadow: 0 0 0 0 rgba(229, 72, 77, .6); animation: rec-pulse 1.2s ease-out infinite; }
+@keyframes rec-pulse { to { box-shadow: 0 0 0 10px rgba(229, 72, 77, 0); } }
+.rec-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 42px; direction: ltr; color: var(--ink); }
+.rec-wave { flex: 1; height: 36px; min-width: 0; color: var(--brand); }
+.rec-send { width: 44px; height: 44px; border-radius: 50%; padding: 0; display: grid; place-items: center; flex: none; }
+[dir="rtl"] .rec-send .i { transform: scaleX(-1); }
+
+.bubble.has-voice { min-width: 230px; padding-top: 8px; }
+.voice { --p: 0; display: flex; align-items: center; gap: 10px; direction: ltr; }
+.v-play {
+  width: 38px; height: 38px; border-radius: 50%; border: 0; padding: 0; flex: none; cursor: pointer; display: grid; place-items: center;
+  background: var(--brand-grad); color: #fff; box-shadow: 0 6px 14px -6px rgba(6, 86, 163, .6); transition: transform .2s var(--spring);
+}
+.v-play:active { transform: scale(.92); }
+.v-play .i { width: 17px; height: 17px; }
+.msg.mine .v-play { background: #fff; color: #0B6FC4; box-shadow: none; }
+.v-wave { flex: 1; height: 30px; display: flex; align-items: center; gap: 2px; cursor: pointer; min-width: 120px;
+  --c-on: var(--brand); --c-off: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.msg.mine .v-wave { --c-on: #fff; --c-off: rgba(255,255,255,.45); }
+.v-wave i { flex: 1; min-width: 2px; border-radius: 2px; background: var(--c-off); transition: background .15s; }
+.v-wave i.on { background: var(--c-on); }
+.v-time { font-size: 12px; font-variant-numeric: tabular-nums; opacity: .85; min-width: 34px; text-align: end; }
+.voice.playing .v-play { animation: v-beat 1.4s ease-in-out infinite; }
+@keyframes v-beat { 50% { transform: scale(1.06); } }
+.bubble .meta .edited { font-style: italic; opacity: .85; margin-inline-end: 4px; }
+.mini-chat .bubble.has-voice { min-width: 210px; }
+.mini-chat .v-wave { min-width: 90px; }

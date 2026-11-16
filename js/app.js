@@ -37,6 +37,9 @@ const ICONS = {
   minus: '<path d="M5 12h14"/>',
   rotate: '<path d="M20 12a8 8 0 1 1-2.4-5.7L20 8.6"/><path d="M20 4v4.6h-4.6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  minimize: '<path fill="currentColor" stroke="none" d="M10.804,12.398c-.007,0-.014-.002-.021-.003-.644-.095-3.979-.462-7.259,1.539-.384,.234-.564,.697-.44,1.13,.022,.076,.462,1.578,1.452,2.915l-3.235,3.171c-.394,.387-.409,1.029-.014,1.415,.508,.497,1.169,.285,1.415,.014l3.253-3.188c1.445,1.051,3.04,1.47,3.273,1.466,.34-.005,.665-.174,.85-.473,2.142-3.453,1.589-7.01,1.564-7.16-.07-.428-.408-.761-.836-.827Z"/><path fill="currentColor" stroke="none" d="M13.196,11.602c.007,0,.014,.002,.021,.003,.644,.095,3.979,.462,7.259-1.539,.384-.234,.564-.697,.44-1.13-.022-.076-.462-1.578-1.452-2.915l3.235-3.171c.394-.387,.409-1.029,.014-1.415-.508-.497-1.169-.285-1.415-.014l-3.253,3.188c-1.445-1.051-3.04-1.47-3.273-1.466-.34,.005-.665,.174-.85,.473-2.142,3.453-1.589,7.01-1.564,7.16,.07,.428,.408,.761,.836,.827Z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  play: '<path fill="currentColor" stroke="none" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
   sort: '<path d="M7 4v16M4 7l3-3 3 3M14 6h7M14 12h5M14 18h3"/>',
@@ -3431,8 +3434,10 @@ const MSG_MAX = 4000;
 const CHAT_IMG_MAX = 1.5 * 1024 * 1024;
 const CHAT_IMG_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const chatImgUrls = new Map(); // storage path -> { url, exp }
-const hasImg = (m) => !!(m.attachment_path || m._local);
-const msgPreviewText = (m) => (m.body || "").trim() ? m.body.replace(/\s+/g, " ") : hasImg(m) ? "📷 " + tx("صورة") : "";
+const hasAtt = (m) => !!(m.attachment_path || m._local);
+const isVoice = (m) => (m.attachment_meta || m._meta)?.kind === "audio";
+const hasImg = (m) => hasAtt(m) && !isVoice(m);
+const msgPreviewText = (m) => (m.body || "").trim() ? m.body.replace(/\s+/g, " ") : isVoice(m) ? "🎤 " + tx("رسالة صوتية") : hasImg(m) ? "📷 " + tx("صورة") : "";
 // makes any picture fit the 1.5 MB limit (keeps small JPG/PNG/WebP/GIF as they are)
 async function prepChatImage(file) {
   if (!file || !/^image\//.test(file.type)) throw new Error(tx("ابعت صورة بس (JPG أو PNG)"));
@@ -3455,14 +3460,15 @@ async function prepChatImage(file) {
   } finally { bmp.close?.(); }
 }
 async function uploadChatImage(att) {
-  const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[att.type] || "jpg";
+  const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/aac": "aac" }[att.type] || "bin";
   const path = `${state.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error } = await sb.storage.from("chat-files").upload(path, att.blob, { contentType: att.type, upsert: false });
   if (error) throw error;
   return path;
 }
-const imgMeta = (att) => att ? { w: att.w, h: att.h, size: att.size, type: att.type } : null;
+const imgMeta = (att) => !att ? null : att.kind === "audio" ? { kind: "audio", dur: att.dur, peaks: att.peaks, size: att.size, type: att.type } : { w: att.w, h: att.h, size: att.size, type: att.type };
 function msgImgHtml(m) {
+  if (isVoice(m)) return voiceHtml(m);
   if (!hasImg(m)) return "";
   const a = m.attachment_meta || m._meta || {};
   const ratio = a.w && a.h ? `aspect-ratio:${a.w} / ${a.h};` : "";
@@ -3486,6 +3492,7 @@ async function hydrateChatImgs(box) {
   });
 }
 function wireMsgImgs(box) {
+  wireVoicePlayers(box);
   const pin = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
   if (pin) $$("img.msg-img", box).forEach((i) => i.addEventListener("load", () => { box.scrollTop = box.scrollHeight; }, { once: true }));
   $$("[data-view-img]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); const img = $("img", b); if (img?.src) openImageViewer(img.src); });
@@ -3540,8 +3547,169 @@ function wireAttach(key, pane, refresh) {
   zone.ondrop = (e) => { e.preventDefault(); zone.classList.remove("drop-on"); take([...e.dataTransfer.files].find((x) => x.type.startsWith("image/"))); };
   draw();
 }
+/* ---------- voice notes (DB v25): record → upload to chat-files → custom player ---------- */
+const VOICE_MAX_SEC = 300;
+const fmtDur = (s) => { s = Math.max(0, Math.round(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+let rec = null; // the recording in progress
+function wireVoice(pane, send) {
+  const mic = $("#mic-btn", pane), bar = $("#rec-bar", pane);
+  if (!mic) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { mic.hidden = true; return; }
+  const stopAll = () => {
+    if (!rec) return;
+    clearInterval(rec.tick); cancelAnimationFrame(rec.raf);
+    rec.stream.getTracks().forEach((t) => t.stop());
+    rec.ctx?.close?.();
+    bar.hidden = true; pane.classList.remove("recording");
+  };
+  const finish = (keep) => new Promise((done) => {
+    if (!rec) return done(null);
+    const r = rec;
+    r.mr.onstop = () => {
+      stopAll(); rec = null;
+      if (!keep) return done(null);
+      const type = (r.mr.mimeType || "audio/webm").split(";")[0];
+      const blob = new Blob(r.chunks, { type });
+      const dur = (Date.now() - r.t0) / 1000;
+      if (dur < 0.6) { toast(tx("التسجيل قصير أوي")); return done(null); }
+      if (blob.size > CHAT_IMG_MAX) { toast(tx("الرسالة الصوتية أكبر من 1.5 ميجا"), true); return done(null); }
+      // 40 bars from the levels we sampled while recording
+      const lv = r.levels.length ? r.levels : [0.2];
+      const peaks = Array.from({ length: 40 }, (_, i) => {
+        const a = Math.floor(i * lv.length / 40), b = Math.max(a + 1, Math.floor((i + 1) * lv.length / 40));
+        return Math.round(Math.min(1, Math.max(...lv.slice(a, b)) * 1.6) * 100) / 100;
+      });
+      done({ kind: "audio", blob, type, dur: Math.round(dur * 10) / 10, peaks, size: blob.size, url: URL.createObjectURL(blob) });
+    };
+    if (r.mr.state !== "inactive") r.mr.stop(); else r.mr.onstop();
+  });
+  mic.onclick = async () => {
+    if (rec) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch { return toast(tx("لازم تسمح للمتصفح يستخدم المايك"), true); }
+    const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4", "audio/webm"].find((t) => MediaRecorder.isTypeSupported?.(t)) || "";
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    rec = { mr, stream, chunks: [], levels: [], t0: Date.now() };
+    mr.ondataavailable = (e) => { if (e.data.size) rec?.chunks.push(e.data); };
+    mr.start(250);
+    // live level meter + waveform
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ctx.createAnalyser(); an.fftSize = 512;
+      ctx.createMediaStreamSource(stream).connect(an);
+      const buf = new Uint8Array(an.fftSize), cv = $("#rec-wave", pane), c2 = cv.getContext("2d");
+      const draw = () => {
+        if (!rec) return;
+        an.getByteTimeDomainData(buf);
+        let sum = 0; for (const v of buf) sum += ((v - 128) / 128) ** 2;
+        const level = Math.sqrt(sum / buf.length);
+        rec.levels.push(level);
+        const W = cv.width = cv.clientWidth * devicePixelRatio, H = cv.height = cv.clientHeight * devicePixelRatio;
+        c2.clearRect(0, 0, W, H);
+        const n = Math.floor(W / (5 * devicePixelRatio)), tail = rec.levels.slice(-n);
+        c2.fillStyle = getComputedStyle(cv).color;
+        tail.forEach((l, i) => {
+          const h = Math.max(3 * devicePixelRatio, Math.min(1, l * 3.2) * H);
+          const x = W - (tail.length - i) * 5 * devicePixelRatio;
+          c2.beginPath(); c2.roundRect?.(x, (H - h) / 2, 3 * devicePixelRatio, h, 2 * devicePixelRatio) ?? c2.rect(x, (H - h) / 2, 3 * devicePixelRatio, h); c2.fill();
+        });
+        rec.raf = requestAnimationFrame(draw);
+      };
+      rec.ctx = ctx; draw();
+    } catch { /* no meter, recording still works */ }
+    bar.hidden = false; pane.classList.add("recording");
+    const tm = $("#rec-time", pane);
+    rec.tick = setInterval(async () => {
+      const sec = (Date.now() - rec.t0) / 1000;
+      tm.textContent = fmtDur(sec);
+      if (sec >= VOICE_MAX_SEC) { toast(tx("وصلت لأقصى مدة ({n} دقايق)، هبعتها", { n: VOICE_MAX_SEC / 60 })); const a = await finish(true); if (a) send(a); }
+    }, 250);
+  };
+  $("#rec-cancel", pane).onclick = () => finish(false);
+  $("#rec-send", pane).onclick = async () => { const a = await finish(true); if (a) send(a); };
+}
+// leaving the thread mid-recording discards it
+addEventListener("hashchange", () => { if (rec) { try { rec.mr.stop(); } catch {} clearInterval(rec.tick); rec.stream.getTracks().forEach((t) => t.stop()); rec = null; } });
+
+function voiceHtml(m) {
+  const a = m.attachment_meta || m._meta || {};
+  const peaks = Array.isArray(a.peaks) && a.peaks.length ? a.peaks : Array.from({ length: 40 }, (_, i) => 0.25 + 0.35 * Math.abs(Math.sin(i * 1.7)));
+  return `<div class="voice" data-voice="${esc(m.attachment_path || "")}" data-local="${esc(m._local || "")}" data-dur="${a.dur || 0}">
+    <button type="button" class="v-play" aria-label="${tx("تشغيل")}">${icon("play")}</button>
+    <div class="v-wave" aria-hidden="true">${peaks.map((p) => `<i style="height:${Math.round(Math.max(0.12, p) * 100)}%"></i>`).join("")}</div>
+    <span class="v-time">${fmtDur(a.dur)}</span></div>`;
+}
+let voiceAudio = null, voiceEl = null;
+async function voiceUrl(el) {
+  if (el.dataset.local) return el.dataset.local;
+  const path = el.dataset.voice; if (!path) return null;
+  const c = chatImgUrls.get(path);
+  if (c && c.exp > Date.now()) return c.url;
+  const { data } = await sb.storage.from("chat-files").createSignedUrl(path, 3600);
+  if (data?.signedUrl) { chatImgUrls.set(path, { url: data.signedUrl, exp: Date.now() + 3500e3 }); return data.signedUrl; }
+  return null;
+}
+function voiceStop() {
+  if (voiceAudio) { voiceAudio.pause(); }
+  if (voiceEl) { voiceEl.classList.remove("playing"); $(".v-play", voiceEl).innerHTML = icon("play"); }
+}
+function wireVoicePlayers(box) {
+  $$(".voice", box).forEach((el) => {
+    // keep the one that is playing across re-renders
+    if (voiceEl && voiceAudio && !voiceAudio.paused && el.dataset.voice && el.dataset.voice === voiceEl.dataset.voice) { voiceEl = el; el.classList.add("playing"); $(".v-play", el).innerHTML = icon("pause"); }
+    const play = $(".v-play", el);
+    play.onclick = async (e) => {
+      e.stopPropagation();
+      if (voiceEl === el && voiceAudio && !voiceAudio.paused) return voiceStop();
+      voiceStop();
+      const url = await voiceUrl(el); if (!url) return toast(tx("مقدرتش أشغّل الرسالة"), true);
+      if (!voiceAudio) voiceAudio = new Audio();
+      if (voiceAudio._src !== url) { voiceAudio.src = url; voiceAudio._src = url; }
+      voiceEl = el;
+      const dur = Number(el.dataset.dur) || 0;
+      voiceAudio.ontimeupdate = () => {
+        if (!voiceEl) return;
+        const d = isFinite(voiceAudio.duration) && voiceAudio.duration > 0 ? voiceAudio.duration : dur || 1;
+        const pr = Math.min(1, voiceAudio.currentTime / d), bars = $$(".v-wave i", voiceEl), k = Math.round(pr * bars.length);
+        bars.forEach((b, i) => b.classList.toggle("on", i < k));
+        $(".v-time", voiceEl).textContent = fmtDur(voiceAudio.currentTime);
+      };
+      voiceAudio.onended = () => { const v = voiceEl; voiceStop(); if (v) { $$(".v-wave i", v).forEach((b) => b.classList.remove("on")); $(".v-time", v).textContent = fmtDur(Number(v.dataset.dur)); } voiceAudio.currentTime = 0; };
+      el.classList.add("playing"); play.innerHTML = icon("pause");
+      try { await voiceAudio.play(); } catch { voiceStop(); toast(tx("مقدرتش أشغّل الرسالة"), true); }
+    };
+    // tap on the wave to seek
+    $(".v-wave", el).onclick = (e) => {
+      if (voiceEl !== el || !voiceAudio || !isFinite(voiceAudio.duration)) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const x = document.documentElement.dir === "rtl" ? (r.right - e.clientX) / r.width : (e.clientX - r.left) / r.width;
+      voiceAudio.currentTime = Math.max(0, Math.min(1, x)) * voiceAudio.duration;
+    };
+  });
+}
+
+/* ---------- edit a message while it's still unread (DB v25) ---------- */
+const groupMsgUnread = (m) => { const g = groupById(m.group_id); return !!g && !g.members.some((x) => x.user_id !== m.sender_id && x.last_read_at && x.last_read_at >= m.created_at); };
+async function editChatMessage(m, group = false) {
+  const v = await promptDialog({ title: tx("تعديل الرسالة"), value: m.body || "", label: tx("التعديل متاح لحد ما الرسالة تتقري"), ok: "حفظ", max: MSG_MAX, optional: hasAtt(m) });
+  if (v === null || v.trim() === (m.body || "").trim()) return;
+  const { data, error } = await sb.rpc(group ? "edit_group_message" : "edit_message", { p_id: m.id, p_body: v });
+  if (error) return toast(/already_read/.test(error.message) ? tx(group ? "حد في المجموعة قرا الرسالة، مينفعش تتعدل" : "الرسالة اتقرت خلاص، مينفعش تتعدل") : friendly(error), true);
+  m.body = v.trim(); m.edited_at = data || new Date().toISOString();
+  if (group) { fillGroupThread(m.group_id); fillConvs(null, m.group_id); } else { const pid = partnerOf(m); fillThread(pid); fillConvs(pid); }
+  toast(tx("اتعدلت الرسالة"));
+}
+
 const takeAttach = (key) => { const a = state.chatAttach?.[key]; if (a) delete state.chatAttach[key]; return a || null; };
-const attachHtml = () => `<input type="file" id="attach-in" accept="image/*" hidden>
+const attachHtml = () => `<div class="rec-bar" id="rec-bar" hidden>
+        <button type="button" class="icon-btn rec-cancel" id="rec-cancel" aria-label="${tx("إلغاء التسجيل")}" title="${tx("إلغاء التسجيل")}">${icon("trash")}</button>
+        <span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="rec-time">0:00</span>
+        <canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas>
+        <button type="button" class="btn primary rec-send" id="rec-send" aria-label="${tx("إرسال الرسالة الصوتية")}">${icon("send")}</button>
+      </div>
+      <button type="button" class="icon-btn attach-btn mic-btn" id="mic-btn" aria-label="${tx("رسالة صوتية")}" title="${tx("سجّل رسالة صوتية")}">${icon("mic")}</button>
+      <input type="file" id="attach-in" accept="image/*" hidden>
       <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="${tx("ابعت صورة")}" title="${tx("ابعت صورة (لحد 1.5 ميجا)")}">${icon("image")}</button>`;
 async function loadMessages() {
   const { data, error } = await sb.from("messages").select("*").order("created_at", { ascending: false }).limit(3000);
@@ -3653,7 +3821,7 @@ function renderThread(p) {
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${avatar(p)}
       <div class="thread-who" data-pid="${p.id}"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
-      <button class="icon-btn thread-min" data-min="u:${p.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minus")}</button>
+      <button class="icon-btn thread-min" data-min="u:${p.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minimize")}</button>
       <button class="icon-btn thread-clear" id="thread-clear" title="مسح المحادثة عندي" aria-label="مسح المحادثة عندي">${icon("trash")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
@@ -3681,6 +3849,7 @@ function renderThread(p) {
   const refresh = () => { btn.disabled = !ta.value.trim() && !state.chatAttach?.[p.id]; };
   ta.oninput = () => { state.chatDrafts[p.id] = ta.value; refresh(); grow(); };
   wireAttach(p.id, pane, refresh);
+  wireVoice(pane, (att) => sendMessage(p.id, null, "", att));
   ta.onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); $("#composer").requestSubmit(); }
   };
@@ -3707,7 +3876,7 @@ function fillThread(pid, jump = false) {
     const canAct = !m._pending && !m._failed;
     html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""} ${m.deleted_at ? "deleted" : ""}" data-mid="${m.id}">
       <div class="bubble-row">
-        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
+        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""} ${!m.deleted_at && isVoice(m) ? "has-voice" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta">${m.edited_at && !m.deleted_at ? `<span class="edited">${tx("معدلة")}</span>` : ""}<time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
         ${canAct ? `<button class="msg-act" data-act="${m.id}" aria-label="${tx("خيارات الرسالة")}" title="${tx("خيارات الرسالة")}">${icon("dots", "sm")}</button>` : ""}
       </div>
       ${m._failed ? `<button class="retry" data-retry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
@@ -3744,6 +3913,7 @@ function openMsgActions(id) {
     <div class="sheet-grab" aria-hidden="true"></div>
     <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
     <div class="sheet-list">
+      ${mine && !m.deleted_at && !m.read_at && !isVoice(m) ? `<button class="sheet-item" data-do="edit"><span class="si-ic">${icon("edit")}</span><span>${tx("تعديل")}</span></button>` : ""}
       ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
       <button class="sheet-item danger" data-do="me"><span class="si-ic">${icon("trash")}</span><span>مسح عندي</span></button>
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
@@ -3754,6 +3924,7 @@ function openMsgActions(id) {
   const copy = $('[data-do="copy"]', ov);
   if (copy) copy.onclick = async () => { closeModal(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
   $('[data-do="me"]', ov).onclick = () => { closeModal(); deleteMessages(m, false); };
+  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { closeModal(); editChatMessage(m); };
   const all = $('[data-do="all"]', ov);
   if (all) all.onclick = async () => {
     closeModal();
@@ -4497,7 +4668,7 @@ function renderGroupThread(g) {
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${groupAvatar(g)}
       <button class="thread-who g-who" id="g-info" title="${tx("بيانات المجموعة")}"><b>${esc(g.name)}</b><small>${esc(groupMembersLine(g))}</small></button>
-      <button class="icon-btn thread-min" data-min="g:${g.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minus")}</button>
+      <button class="icon-btn thread-min" data-min="g:${g.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minimize")}</button>
       <button class="icon-btn thread-clear" id="g-info2" title="${tx("بيانات المجموعة")}" aria-label="${tx("بيانات المجموعة")}">${icon("users")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
@@ -4516,6 +4687,7 @@ function renderGroupThread(g) {
   const refresh = () => { btn.disabled = !ta.value.trim() && !state.chatAttach?.[key]; };
   ta.oninput = () => { state.chatDrafts[key] = ta.value; refresh(); grow(); };
   wireAttach(key, pane, refresh);
+  wireVoice(pane, (att) => sendGroupMessage(g.id, null, "", att));
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); $("#composer").requestSubmit(); } };
   $("#composer").onsubmit = (e) => { e.preventDefault(); sendGroupMessage(g.id, ta); };
   if (matchMedia("(hover: hover)").matches) ta.focus();
@@ -4543,7 +4715,7 @@ function fillGroupThread(gid, jump = false) {
     html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""} ${m.deleted_at ? "deleted" : ""} g-msg" data-mid="${m.id}">
       ${!mine && !grouped ? `<div class="g-sender">${avatar(who, "sm")}<b style="color:${senderColor(m.sender_id)}">${esc(who?.full_name || tx("عضو سابق"))}</b></div>` : ""}
       <div class="bubble-row">
-        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
+        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""} ${!m.deleted_at && isVoice(m) ? "has-voice" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta">${m.edited_at && !m.deleted_at ? `<span class="edited">${tx("معدلة")}</span>` : ""}<time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
         ${canAct ? `<button class="msg-act" data-gact="${m.id}" aria-label="${tx("خيارات الرسالة")}" title="${tx("خيارات الرسالة")}">${icon("dots", "sm")}</button>` : ""}
       </div>
       ${m._failed ? `<button class="retry" data-gretry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
@@ -4619,6 +4791,7 @@ function openGroupMsgActions(id) {
     <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
     <div class="sheet-list">
       ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
+      ${mine && !m.deleted_at && !isVoice(m) && groupMsgUnread(m) ? `<button class="sheet-item" data-do="edit"><span class="si-ic">${icon("edit")}</span><span>${tx("تعديل")}</span></button>` : ""}
       ${!mine && profile(m.sender_id) ? `<a class="sheet-item" href="#/chat?with=${m.sender_id}" data-do="dm"><span class="si-ic">${icon("chat")}</span><span>${tx("رد على {name} في الخاص", { name: esc(profile(m.sender_id).full_name.split(" ")[0]) })}</span></a>` : ""}
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
     </div>
@@ -4628,6 +4801,7 @@ function openGroupMsgActions(id) {
   const copy = $('[data-do="copy"]', ov);
   if (copy) copy.onclick = async () => { closeModal(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
   const dm = $('[data-do="dm"]', ov); if (dm) dm.onclick = () => closeModal();
+  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { closeModal(); editChatMessage(m, true); };
   const all = $('[data-do="all"]', ov);
   if (all) all.onclick = async () => {
     closeModal();
