@@ -751,11 +751,61 @@ function renderChatHeads(changedKey, isNew) {
   }
   $$(".ch-head", box).forEach((el) => { if (!chatHeads.some((h) => h.key === el.dataset.key)) el.remove(); });
   [...box.children].reverse().forEach((el, i) => el.style.setProperty("--i", i));
+  syncHeadsActive();
   // preview bubble on the newest head for a few seconds
   $$(".ch-head.peek", box).forEach((el) => el.classList.remove("peek"));
   const el = changedKey && $(`[data-key="${CSS.escape(changedKey)}"]`, box);
   if (el) { el.classList.add("peek"); clearTimeout(peekTimer); peekTimer = setTimeout(() => el.classList.remove("peek"), 5200); }
 }
+/* a small chat window that opens beside the heads (Messenger style) */
+let miniKey = null;
+const miniOpenWith = () => (miniKey?.startsWith("u:") ? miniKey.slice(2) : null);
+const miniOpenGroup = () => (miniKey?.startsWith("g:") ? miniKey.slice(2) : null);
+function syncHeadsActive() {
+  $$("#chat-heads .ch-head").forEach((el) => {
+    const on = el.dataset.key === miniKey;
+    el.classList.toggle("active", on);
+    if (on) { el.classList.remove("peek"); const b = $(".ch-badge", el); if (b) b.hidden = true; }
+  });
+}
+function openMiniChat(key) {
+  if (miniKey === key) return closeMiniChat();
+  const [kind, id] = key.split(":");
+  const p = kind === "u" ? profile(id) : null, g = kind === "g" ? groupById(id) : null;
+  if (!p && !g) return openChatHead(key);
+  let box = $("#mini-chat");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "mini-chat"; box.className = "mini-chat"; box.setAttribute("role", "dialog");
+    document.body.append(box);
+  }
+  box.setAttribute("aria-label", p ? p.full_name : g.name);
+  box.innerHTML = `<div id="chat-pane" class="mini-pane"></div>`;
+  miniKey = key;
+  const h = chatHeads.find((x) => x.key === key); if (h) h.count = 0;
+  box.classList.remove("closing"); void box.offsetWidth; box.classList.add("open");
+  if (p) renderThread(p); else renderGroupThread(g);
+  const head = $(".thread-head", box);
+  head.insertAdjacentHTML("beforeend", `
+    <a class="icon-btn mini-full" href="${g ? `#/chat?group=${id}` : `#/chat?with=${id}`}" title="${tx("فتح في المحادثات")}" aria-label="${tx("فتح في المحادثات")}">${icon("expand", "sm")}</a>
+    <button type="button" class="icon-btn mini-x" title="${tx("إغلاق")}" aria-label="${tx("إغلاق")}">${icon("close", "sm")}</button>`);
+  $(".mini-x", box).onclick = closeMiniChat;
+  $(".mini-full", box).onclick = () => { closeMiniChat(false); chatHeadRemove(key); };
+  syncHeadsActive();
+}
+function closeMiniChat(animate = true) {
+  const box = $("#mini-chat");
+  if (!box || !miniKey) return;
+  miniKey = null;
+  box.classList.remove("open");
+  if (animate && !reduceMotion) { box.classList.add("closing"); setTimeout(() => { if (!miniKey) { box.classList.remove("closing"); box.innerHTML = ""; } }, 240); }
+  else box.innerHTML = "";
+  syncHeadsActive();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && miniKey && !$("#modal-root .overlay") && !$(".img-viewer")) closeMiniChat();
+});
+
 function openChatHead(key) {
   const [kind, id] = key.split(":");
   chatHeadRemove(key);
@@ -763,8 +813,8 @@ function openChatHead(key) {
 }
 // tap opens the chat; drag it to the ✕ at the bottom to dismiss (like Messenger)
 function wireChatHead(el, key) {
-  $(".ch-x", el).onclick = (e) => { e.stopPropagation(); chatHeadRemove(key); };
-  el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openChatHead(key); } };
+  $(".ch-x", el).onclick = (e) => { e.stopPropagation(); if (miniKey === key) closeMiniChat(); chatHeadRemove(key); };
+  el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openMiniChat(key); } };
   el.addEventListener("dragstart", (e) => e.preventDefault());
   let sx = 0, sy = 0, drag = false, down = false;
   const trash = () => $("#ch-trash");
@@ -785,7 +835,7 @@ function wireChatHead(el, key) {
   const end = (e) => {
     if (!down) return; down = false;
     document.body.classList.remove("ch-dragging");
-    if (!drag) { openChatHead(key); return; }
+    if (!drag) { openMiniChat(key); return; }
     el.classList.remove("dragging");
     const hit = overTrash(e.clientX, e.clientY);
     trash().classList.remove("hot");
@@ -1038,6 +1088,7 @@ function route() {
   if (!state.me || !$("#view")) return;
   const { page, params } = currentRoute();
   document.body.dataset.page = page;
+  if (page === "chat") closeMiniChat(false);
   if (page === "chat") { const w = params.get("with"), g = params.get("group"); if (w) chatHeadRemove("u:" + w); if (g) chatHeadRemove("g:" + g); }
   renderNav();
   const view = $("#view");
@@ -3729,7 +3780,7 @@ async function sendMessage(pid, ta, bodyOverride, attOverride) {
     if (state.msgs.some((m) => m.id === data.id)) state.msgs.splice(i, 1); // realtime got there first
     else state.msgs[i] = data;
   }
-  if (currentRoute().page === "chat") { fillThread(pid); fillConvs(currentRoute().params.get("with")); }
+  if (currentRoute().page === "chat" || miniOpenWith() === pid) { fillThread(pid); fillConvs(currentRoute().params.get("with")); }
 }
 
 let readBusy = false;
@@ -3765,7 +3816,7 @@ function onMessageRealtime(evt, m) {
     if (i >= 0) state.msgs[i] = { ...state.msgs[i], ...m };
   }
   const r = currentRoute();
-  const openWith = r.page === "chat" ? r.params.get("with") : null;
+  const openWith = r.page === "chat" ? r.params.get("with") : miniOpenWith();
   const pid = partnerOf(m);
   if (openWith === pid) { fillThread(pid); if (evt === "INSERT" && m.recipient_id === state.me.id) markThreadRead(pid); }
   if (r.page === "chat") fillConvs(openWith);
@@ -4526,7 +4577,7 @@ async function sendGroupMessage(gid, ta, bodyOverride, attOverride) {
     if (state.gmsgs.some((m) => m.id === data.id)) state.gmsgs.splice(i, 1); else state.gmsgs[i] = data;
     const me = myMember(groupById(gid)); if (me) me.last_read_at = data.created_at;
   }
-  if (currentRoute().params.get("group") === gid) { fillGroupThread(gid); fillConvs(null, gid); }
+  if (currentRoute().params.get("group") === gid || miniOpenGroup() === gid) { fillGroupThread(gid); fillConvs(null, gid); }
 }
 
 let gReadBusy = false;
@@ -4671,7 +4722,7 @@ function openGroupModal(gid = null) {
 function onGroupRealtime(table, evt, row, old) {
   if (!state.me) return;
   const r = currentRoute();
-  const openG = r.page === "chat" ? r.params.get("group") : null;
+  const openG = r.page === "chat" ? r.params.get("group") : miniOpenGroup();
   if (table === "group_messages") {
     const m = row; if (!m?.id) return;
     const i = state.gmsgs.findIndex((x) => x.id === m.id);
