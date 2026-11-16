@@ -4686,7 +4686,18 @@ const groupMsgs = (gid) => { const me = myMember(groupById(gid)); return state.g
 const groupUnread = (gid) => { const me = myMember(groupById(gid)); if (!me) return 0; return groupMsgs(gid).filter((m) => m.sender_id !== state.me.id && !m.deleted_at && m.created_at > me.last_read_at).length; };
 const groupsUnread = () => state.groups.reduce((s, g) => s + groupUnread(g.id), 0);
 const groupInitials = (name) => name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-const groupAvatar = (g, cls = "") => `<span class="av g-av ${cls}" style="background:${esc(g.color)}" aria-hidden="true">${icon("team", "sm")}<b>${esc(groupInitials(g.name))}</b></span>`;
+const groupAvatar = (g, cls = "") => g.avatar_url
+  ? `<img class="av g-av g-photo ${cls}" src="${esc(g.avatar_url)}" alt="" loading="lazy" draggable="false">`
+  : `<span class="av g-av ${cls}" style="background:${esc(g.color)}" aria-hidden="true">${icon("team", "sm")}<b>${esc(groupInitials(g.name))}</b></span>`;
+async function uploadGroupPhoto(gid, blob) {
+  const small = await resizeImage(blob);
+  const path = `${gid}/${Date.now()}.jpg`;
+  const { error } = await sb.storage.from("avatars").upload(path, small, { contentType: "image/jpeg" });
+  if (error) throw error;
+  const { data } = sb.storage.from("avatars").getPublicUrl(path);
+  const r = await sb.rpc("set_group_avatar", { p_group: gid, p_url: data.publicUrl });
+  if (r.error) throw r.error;
+}
 const groupMembersLine = (g) => {
   const names = g.members.map((m) => profile(m.user_id)).filter(Boolean).sort((a, b) => (a.id === state.me.id) - (b.id === state.me.id)).map((p) => p.id === state.me.id ? tx("انت") : p.full_name.split(" ")[0]);
   return names.slice(0, 5).join("، ") + (names.length > 5 ? " " + tx("و{n} كمان", { n: names.length - 5 }) : "");
@@ -4862,7 +4873,10 @@ function openGroupModal(gid = null) {
     <h2>${isNew ? tx("مجموعة جديدة") : tx("بيانات المجموعة")}</h2>
     <form id="gf">
       <div class="g-top">
-        <span class="g-preview" id="g-preview">${groupAvatar({ name: g?.name || "؟", color }, "lg")}</span>
+        <span class="g-photo-wrap">
+          <span class="g-preview" id="g-preview">${groupAvatar({ name: g?.name || "؟", color, avatar_url: g?.avatar_url }, "lg")}</span>
+          ${owner ? `<button type="button" class="g-photo-btn" id="g-photo" title="${tx("صورة المجموعة")}" aria-label="${tx("تغيير صورة المجموعة")}">${icon("image", "sm")}</button>` : ""}
+        </span>
         <label class="field" style="flex:1;margin:0"><span>${tx("اسم المجموعة")}</span><input class="input" name="name" maxlength="60" required value="${esc(g?.name || "")}" ${owner ? "" : "readonly"} placeholder="${tx("مثلاً: فريق التصميم")}"></label>
       </div>
       ${owner ? `<div class="field"><span>${tx("اللون")}</span><div class="swatches">${COL_COLORS.map((c) => `<label style="--c:${c}"><input type="radio" name="color" value="${c}" ${c.toLowerCase() === color.toLowerCase() ? "checked" : ""} aria-label="${c}"><span></span></label>`).join("")}</div></div>` : ""}
@@ -4883,7 +4897,22 @@ function openGroupModal(gid = null) {
   wirePeopleSearch(ov);
   $("[data-close]", ov).onclick = closeModal;
   const err = (m) => { $("#gf-err", ov).textContent = m; };
-  const preview = () => { const n = $("input[name=name]", ov).value || "؟", c = $("input[name=color]:checked", ov)?.value || color; $("#g-preview", ov).innerHTML = groupAvatar({ name: n, color: c }, "lg"); };
+  // group photo: picked + cropped now, uploaded on save. photo: undefined = unchanged, null = removed, Blob = new
+  let photo, photoUrl = g?.avatar_url || null;
+  const preview = () => {
+    const n = $("input[name=name]", ov).value || "؟", c = $("input[name=color]:checked", ov)?.value || color;
+    $("#g-preview", ov).innerHTML = groupAvatar({ name: n, color: c, avatar_url: photoUrl }, "lg");
+  };
+  const gp = $("#g-photo", ov);
+  if (gp) gp.onclick = () => {
+    if (photoUrl) {
+      msgMenu(gp, `<div class="sheet-list">
+        <button type="button" class="sheet-item" data-do="change"><span class="si-ic">${icon("image")}</span><span>${tx("تغيير الصورة")}</span></button>
+        <button type="button" class="sheet-item danger" data-do="remove"><span class="si-ic">${icon("trash")}</span><span>${tx("شيل الصورة")}</span></button></div>`);
+      $('.msg-menu [data-do="change"]').onclick = () => { msgMenuOpen?.close(); pickPhoto((b) => { photo = b; photoUrl = URL.createObjectURL(b); preview(); }); };
+      $('.msg-menu [data-do="remove"]').onclick = () => { msgMenuOpen?.close(); photo = null; photoUrl = null; preview(); };
+    } else pickPhoto((b) => { photo = b; photoUrl = URL.createObjectURL(b); preview(); });
+  };
   $("input[name=name]", ov).oninput = preview;
   $$("input[name=color]", ov).forEach((r) => r.onchange = preview);
   const done = async (msg, goList) => { await loadGroups(); closeModal(); if (msg) toast(msg); if (goList) location.hash = "#/chat"; else route(); renderChatBadges(); };
@@ -4898,12 +4927,17 @@ function openGroupModal(gid = null) {
       if (!add.length) { btn.disabled = false; return err(tx("اختار عضو واحد على الأقل")); }
       const { data, error } = await sb.rpc("create_chat_group", { p_name: name, p_members: add, p_color: c });
       if (error) { btn.disabled = false; return err(friendly(error)); }
+      if (photo) { try { await uploadGroupPhoto(data, photo); } catch (ex) { toast(friendly(ex), true); } }
       await loadGroups(); closeModal(); location.hash = "#/chat?group=" + data; toast(tx("اتعملت المجموعة"));
       return;
     }
     const r1 = await sb.rpc("update_chat_group", { p_group: g.id, p_name: name, p_color: c });
     const r2 = add.length ? await sb.rpc("add_group_members", { p_group: g.id, p_members: add }) : { error: null };
     if (r1.error || r2.error) { btn.disabled = false; return err(friendly(r1.error || r2.error)); }
+    try {
+      if (photo) await uploadGroupPhoto(g.id, photo);
+      else if (photo === null) { const r3 = await sb.rpc("set_group_avatar", { p_group: g.id, p_url: null }); if (r3.error) throw r3.error; }
+    } catch (ex) { btn.disabled = false; return err(friendly(ex)); }
     done(tx("اتحفظت المجموعة"));
   };
   $$("[data-gm-rm]", ov).forEach((b) => b.onclick = async () => {

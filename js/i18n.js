@@ -43,6 +43,7 @@ const EN = {
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
   "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "صورة المجموعة": "Group photo", "تغيير صورة المجموعة": "Change group photo",
   "رسالة صوتية": "Voice message", "سجّل رسالة صوتية": "Record a voice message", "إلغاء التسجيل": "Cancel recording", "إرسال الرسالة الصوتية": "Send voice message", "التسجيل قصير أوي": "Recording too short", "الرسالة الصوتية أكبر من 1.5 ميجا": "Voice message is larger than 1.5 MB", "لازم تسمح للمتصفح يستخدم المايك": "Allow the browser to use the microphone", "وصلت لأقصى مدة ({n} دقايق)، هبعتها": "Max length reached ({n} min), sending it", "تشغيل": "Play", "مقدرتش أشغّل الرسالة": "Couldn't play the message", "تعديل الرسالة": "Edit message", "التعديل متاح لحد ما الرسالة تتقري": "You can edit until the message is read", "حد في المجموعة قرا الرسالة، مينفعش تتعدل": "Someone in the group already read it, it can't be edited", "الرسالة اتقرت خلاص، مينفعش تتعدل": "The message was already read, it can't be edited", "اتعدلت الرسالة": "Message edited", "معدلة": "edited",
   "تصغير لفقاعة": "Minimize to bubble",
   "فتح في المحادثات": "Open in Chats",
