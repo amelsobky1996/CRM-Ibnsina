@@ -5,3 +5,6 @@ export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 
 // اسم المستخدم بيتحول داخليًا لـ username@EMAIL_DOMAIN
 export const EMAIL_DOMAIN = "ibnsina-crm.local";
+
+// مفتاح Web Push العام (VAPID public key) — لازم يطابق vapid_public في private.app_config
+export const VAPID_PUBLIC = "BDvvXziITBMCjcljXEhK5JGjo5y2WyPRimAAl_5AK6WDGLAEQRyv5wJBf4lqbcN6BPlPe4H8EwCYWwcciaIR-8M";

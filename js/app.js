@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_DOMAIN } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_DOMAIN, VAPID_PUBLIC } from "./config.js";
 import { tx, LANG, THEME, LOCALE, startTranslator, applyPrefs, setLang, setTheme } from "./i18n.js";
 
 /* =====================================================================
@@ -4042,7 +4042,6 @@ function printDoc(html, title) {
 /* =====================================================================
    Push notifications (arrive while the app is closed)
    ===================================================================== */
-const VAPID_PUBLIC = "BDvvXziITBMCjcljXEhK5JGjo5y2WyPRimAAl_5AK6WDGLAEQRyv5wJBf4lqbcN6BPlPe4H8EwCYWwcciaIR-8M";
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 function pushStatus() {

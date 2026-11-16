@@ -1,0 +1,7 @@
+# Edge Functions are called by the app/database with their own checks (admin JWT inside the function / shared secret),
+# so the gateway JWT check is off — same as the live project.
+[functions.admin-users]
+verify_jwt = false
+
+[functions.push-send]
+verify_jwt = false
