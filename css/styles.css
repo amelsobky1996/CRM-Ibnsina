@@ -2132,3 +2132,12 @@ html[dir="ltr"] .t-title b { text-align: left; }
 .modal.prompt h2 { text-align: center; }
 .modal.prompt .field { margin: 14px 0 4px; }
 .modal.prompt textarea { min-height: 84px; }
+
+/* ---------- RTL: keep every user-text block right-aligned, even when it starts with an English word ---------- */
+html[dir="rtl"] :is(.t-title b, .title-input, .proj-top h3, .proj-top p, .person b, .org-card b, .org-card small,
+  .assignee-list .tag, .file .info b, textarea, input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),
+  .proj-chip span, .me-row b, .side-me .who b, .next-item b, .np-text b, .np-ex, .sub .txt, .c-body p, .tl-item p b,
+  .kb-card b, .rep-list b, .pc-name, .pc-title, .pc-mgr b, .pick-p .tp-name b, .acct-btn .who b, .acct-head b,
+  [dir="auto"], [contenteditable]) { text-align: right; }
+html[dir="rtl"] :is(textarea, input)::placeholder { text-align: right; }
+html[dir="rtl"] :is(input[type=email], input[type=url], input[type=password], input[type=tel]) { text-align: right; }
