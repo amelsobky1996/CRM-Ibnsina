@@ -3886,14 +3886,14 @@ function fillThread(pid, jump = false) {
     box.innerHTML = html;
   if (jump || nearBottom) box.scrollTop = box.scrollHeight;
   wireMsgImgs(box);
-  $$("[data-act]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openMsgActions(b.dataset.act); });
+  $$("[data-act]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openMsgActions(b.dataset.act, b); });
   // long-press / right-click on a bubble opens the same menu
   $$(".msg[data-mid] .bubble", box).forEach((bub) => {
     const id = bub.closest(".msg").dataset.mid;
     if (id.startsWith("tmp-")) return;
-    bub.addEventListener("contextmenu", (e) => { e.preventDefault(); openMsgActions(id); });
+    bub.addEventListener("contextmenu", (e) => { e.preventDefault(); openMsgActions(id, bub); });
     let t;
-    bub.addEventListener("touchstart", () => { t = setTimeout(() => { t = null; navigator.vibrate?.(15); openMsgActions(id); }, 480); }, { passive: true });
+    bub.addEventListener("touchstart", () => { t = setTimeout(() => { t = null; navigator.vibrate?.(15); openMsgActions(id, bub); }, 480); }, { passive: true });
     const cancel = () => clearTimeout(t);
     bub.addEventListener("touchend", cancel); bub.addEventListener("touchmove", cancel); bub.addEventListener("touchcancel", cancel);
   });
@@ -3905,29 +3905,62 @@ function fillThread(pid, jump = false) {
   });
 }
 
-function openMsgActions(id) {
+// small dropdown next to the message's ⋮ (or the bubble on long-press / right-click)
+let msgMenuOpen = null;
+function msgMenu(anchor, inner) {
+  msgMenuOpen?.close(true);
+  const menu = document.createElement("div");
+  menu.className = "msg-menu"; menu.setAttribute("role", "menu");
+  menu.innerHTML = inner;
+  document.body.append(menu);
+  const r = (anchor || document.body).getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight, pad = 8;
+  // open towards the middle of the screen, below the button (above it if there's no room)
+  let left = r.left + r.width / 2 < innerWidth / 2 ? r.left : r.right - mw;
+  let top = r.bottom + 6, up = false;
+  if (top + mh > innerHeight - pad && r.top - mh - 6 > pad) { top = r.top - mh - 6; up = true; }
+  left = Math.max(pad, Math.min(left, innerWidth - mw - pad)); top = Math.max(pad, Math.min(top, innerHeight - mh - pad));
+  menu.style.left = left + "px"; menu.style.top = top + "px";
+  menu.style.transformOrigin = `${left + mw / 2 < r.left + r.width / 2 ? "right" : "left"} ${up ? "bottom" : "top"}`;
+  anchor?.classList?.add("menu-on");
+  const onDown = (e) => { if (!menu.contains(e.target) && e.target !== anchor && !anchor?.contains?.(e.target)) close(); };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const onScroll = (e) => { if (!menu.contains(e.target)) close(); };
+  function close(instant = false) {
+    if (msgMenuOpen !== menu) return;
+    msgMenuOpen = null;
+    anchor?.classList?.remove("menu-on");
+    removeEventListener("pointerdown", onDown, true); removeEventListener("keydown", onKey, true);
+    removeEventListener("scroll", onScroll, true); removeEventListener("resize", close); removeEventListener("hashchange", close);
+    if (instant || reduceMotion) menu.remove(); else { menu.classList.add("closing"); setTimeout(() => menu.remove(), 140); }
+  }
+  setTimeout(() => {
+    addEventListener("pointerdown", onDown, true); addEventListener("keydown", onKey, true);
+    addEventListener("scroll", onScroll, true); addEventListener("resize", close); addEventListener("hashchange", close);
+  });
+  menu.close = close;
+  msgMenuOpen = menu;
+  $("button, a", menu)?.focus({ preventScroll: true });
+  return menu;
+}
+
+function openMsgActions(id, anchor) {
   const m = state.msgs.find((x) => x.id === id);
   if (!m || $("#modal-root .overlay")) return;
   const mine = m.sender_id === state.me.id;
-  const ov = openModal(`
-    <div class="sheet-grab" aria-hidden="true"></div>
-    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
+  const ov = msgMenu(anchor, `
     <div class="sheet-list">
       ${mine && !m.deleted_at && !m.read_at && !isVoice(m) ? `<button class="sheet-item" data-do="edit"><span class="si-ic">${icon("edit")}</span><span>${tx("تعديل")}</span></button>` : ""}
       ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
       <button class="sheet-item danger" data-do="me"><span class="si-ic">${icon("trash")}</span><span>مسح عندي</span></button>
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
-    </div>
-    <button class="btn ghost" data-close style="width:100%">إلغاء</button>`, { label: "خيارات الرسالة" });
-  ov.classList.add("sheet");
-  $("[data-close]", ov).onclick = closeModal;
+    </div>`);
   const copy = $('[data-do="copy"]', ov);
-  if (copy) copy.onclick = async () => { closeModal(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
-  $('[data-do="me"]', ov).onclick = () => { closeModal(); deleteMessages(m, false); };
-  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { closeModal(); editChatMessage(m); };
+  if (copy) copy.onclick = async () => { ov.close(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
+  $('[data-do="me"]', ov).onclick = () => { ov.close(); deleteMessages(m, false); };
+  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { ov.close(); editChatMessage(m); };
   const all = $('[data-do="all"]', ov);
   if (all) all.onclick = async () => {
-    closeModal();
+    ov.close();
     const ok = await confirmDialog({ title: tx("مسح الرسالة عند الكل؟"), body: tx("الرسالة هتتمسح عندك وعند {name}، وهيظهر مكانها إنها اتمسحت.", { name: profile(m.recipient_id)?.full_name || "" }), ok: "مسح عند الكل" });
     if (ok) deleteMessages(m, true);
   };
@@ -4725,13 +4758,13 @@ function fillGroupThread(gid, jump = false) {
   box.innerHTML = html;
   if (jump || nearBottom) box.scrollTop = box.scrollHeight;
   wireMsgImgs(box);
-  $$("[data-gact]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openGroupMsgActions(b.dataset.gact); });
+  $$("[data-gact]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openGroupMsgActions(b.dataset.gact, b); });
   $$(".msg[data-mid] .bubble", box).forEach((bub) => {
     const id = bub.closest(".msg").dataset.mid;
     if (id.startsWith("tmp-")) return;
-    bub.addEventListener("contextmenu", (e) => { e.preventDefault(); openGroupMsgActions(id); });
+    bub.addEventListener("contextmenu", (e) => { e.preventDefault(); openGroupMsgActions(id, bub); });
     let t;
-    bub.addEventListener("touchstart", () => { t = setTimeout(() => { navigator.vibrate?.(15); openGroupMsgActions(id); }, 480); }, { passive: true });
+    bub.addEventListener("touchstart", () => { t = setTimeout(() => { navigator.vibrate?.(15); openGroupMsgActions(id, bub); }, 480); }, { passive: true });
     const cancel = () => clearTimeout(t);
     bub.addEventListener("touchend", cancel); bub.addEventListener("touchmove", cancel); bub.addEventListener("touchcancel", cancel);
   });
@@ -4782,29 +4815,24 @@ async function markGroupRead(gid, clear = false) {
   if (error) console.error(error);
 }
 
-function openGroupMsgActions(id) {
+function openGroupMsgActions(id, anchor) {
   const m = state.gmsgs.find((x) => x.id === id);
   if (!m || $("#modal-root .overlay")) return;
   const mine = m.sender_id === state.me.id;
-  const ov = openModal(`
-    <div class="sheet-grab" aria-hidden="true"></div>
-    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
+  const ov = msgMenu(anchor, `
     <div class="sheet-list">
       ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
       ${mine && !m.deleted_at && !isVoice(m) && groupMsgUnread(m) ? `<button class="sheet-item" data-do="edit"><span class="si-ic">${icon("edit")}</span><span>${tx("تعديل")}</span></button>` : ""}
       ${!mine && profile(m.sender_id) ? `<a class="sheet-item" href="#/chat?with=${m.sender_id}" data-do="dm"><span class="si-ic">${icon("chat")}</span><span>${tx("رد على {name} في الخاص", { name: esc(profile(m.sender_id).full_name.split(" ")[0]) })}</span></a>` : ""}
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
-    </div>
-    <button class="btn ghost" data-close style="width:100%">إلغاء</button>`, { label: "خيارات الرسالة" });
-  ov.classList.add("sheet");
-  $("[data-close]", ov).onclick = closeModal;
+    </div>`);
   const copy = $('[data-do="copy"]', ov);
-  if (copy) copy.onclick = async () => { closeModal(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
-  const dm = $('[data-do="dm"]', ov); if (dm) dm.onclick = () => closeModal();
-  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { closeModal(); editChatMessage(m, true); };
+  if (copy) copy.onclick = async () => { ov.close(); try { await navigator.clipboard.writeText(m.body); toast(tx("اتنسخ")); } catch { toast(tx("مقدرتش أنسخ"), true); } };
+  const dm = $('[data-do="dm"]', ov); if (dm) dm.onclick = () => ov.close();
+  const ed = $('[data-do="edit"]', ov); if (ed) ed.onclick = () => { ov.close(); editChatMessage(m, true); };
   const all = $('[data-do="all"]', ov);
   if (all) all.onclick = async () => {
-    closeModal();
+    ov.close();
     const ok = await confirmDialog({ title: tx("مسح الرسالة عند الكل؟"), body: tx("الرسالة هتتمسح عند كل أعضاء المجموعة، وهيظهر مكانها إنها اتمسحت."), ok: "مسح عند الكل" });
     if (!ok) return;
     const { data, error } = await sb.rpc("delete_group_message", { p_id: m.id });
