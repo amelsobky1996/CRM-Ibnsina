@@ -37,6 +37,7 @@ const ICONS = {
   minus: '<path d="M5 12h14"/>',
   rotate: '<path d="M20 12a8 8 0 1 1-2.4-5.7L20 8.6"/><path d="M20 4v4.6h-4.6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
   sort: '<path d="M7 4v16M4 7l3-3 3 3M14 6h7M14 12h5M14 18h3"/>',
   grip: '<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
@@ -699,6 +700,102 @@ function renderLogin(message = "") {
 /* =====================================================================
    Shell + routing
    ===================================================================== */
+/* ---------- Messenger-style chat heads above the floating button ---------- */
+const chatHeads = []; // newest first: { key, kind, id, count, text }
+let peekTimer = 0;
+function chatHeadPush(kind, id, text, from) {
+  const key = kind + ":" + id;
+  let h = chatHeads.find((x) => x.key === key);
+  const isNew = !h;
+  if (h) { h.count++; h.text = text; chatHeads.splice(chatHeads.indexOf(h), 1); }
+  else h = { key, kind, id, count: 1, text };
+  h.from = from;
+  chatHeads.unshift(h);
+  while (chatHeads.length > 4) chatHeads.pop();
+  navigator.vibrate?.(25);
+  renderChatHeads(key, isNew);
+}
+function chatHeadRemove(key, animate = true) {
+  const i = chatHeads.findIndex((x) => x.key === key);
+  if (i < 0) return;
+  chatHeads.splice(i, 1);
+  const el = $(`#chat-heads [data-key="${CSS.escape(key)}"]`);
+  if (el && animate && !reduceMotion) { el.classList.add("leaving"); setTimeout(() => el.remove(), 260); }
+  else el?.remove();
+}
+function chatHeadHtml(h) {
+  const g = h.kind === "g" ? groupById(h.id) : null, p = h.kind === "u" ? profile(h.id) : null;
+  const name = g ? g.name : p?.full_name || tx("رسالة جديدة");
+  return `<div class="ch-head" data-key="${esc(h.key)}" role="button" tabindex="0" aria-label="${esc(tx("رسالة من {name}", { name }))}">
+      <span class="ch-av">${g ? groupAvatar(g) : avatar(p, "lg")}</span>
+      <span class="ch-badge" ${h.count > 1 ? "" : "hidden"}>${h.count > 99 ? "99+" : h.count}</span>
+      <button type="button" class="ch-x" aria-label="${tx("إغلاق")}">${icon("close", "sm")}</button>
+      <span class="ch-peek"><b>${esc(name)}</b><span dir="auto">${esc(h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text)}</span></span>
+    </div>`;
+}
+function renderChatHeads(changedKey, isNew) {
+  const box = $("#chat-heads"); if (!box) return;
+  // keep existing nodes (their animations), add/update/reorder
+  for (const h of chatHeads) {
+    let el = $(`[data-key="${CSS.escape(h.key)}"]`, box);
+    if (!el) {
+      const t = document.createElement("template"); t.innerHTML = chatHeadHtml(h).trim(); el = t.content.firstChild;
+      wireChatHead(el, h.key);
+      if (h.key === changedKey && isNew) el.classList.add("entering");
+    } else if (h.key === changedKey) {
+      $(".ch-peek span", el).textContent = h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text;
+      const b = $(".ch-badge", el); b.hidden = h.count < 2; b.textContent = h.count > 99 ? "99+" : h.count;
+      el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+    }
+    box.append(el); // order: newest last in DOM = closest to the button
+  }
+  $$(".ch-head", box).forEach((el) => { if (!chatHeads.some((h) => h.key === el.dataset.key)) el.remove(); });
+  [...box.children].reverse().forEach((el, i) => el.style.setProperty("--i", i));
+  // preview bubble on the newest head for a few seconds
+  $$(".ch-head.peek", box).forEach((el) => el.classList.remove("peek"));
+  const el = changedKey && $(`[data-key="${CSS.escape(changedKey)}"]`, box);
+  if (el) { el.classList.add("peek"); clearTimeout(peekTimer); peekTimer = setTimeout(() => el.classList.remove("peek"), 5200); }
+}
+function openChatHead(key) {
+  const [kind, id] = key.split(":");
+  chatHeadRemove(key);
+  location.hash = kind === "g" ? `#/chat?group=${id}` : `#/chat?with=${id}`;
+}
+// tap opens the chat; drag it to the ✕ at the bottom to dismiss (like Messenger)
+function wireChatHead(el, key) {
+  $(".ch-x", el).onclick = (e) => { e.stopPropagation(); chatHeadRemove(key); };
+  el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openChatHead(key); } };
+  el.addEventListener("dragstart", (e) => e.preventDefault());
+  let sx = 0, sy = 0, drag = false, down = false;
+  const trash = () => $("#ch-trash");
+  const overTrash = (x, y) => { const r = trash().getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 70; };
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest(".ch-x")) return;
+    down = true; drag = false; sx = e.clientX; sy = e.clientY; el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!drag && Math.hypot(dx, dy) > 8) { drag = true; el.classList.add("dragging"); el.classList.remove("peek"); document.body.classList.add("ch-dragging"); }
+    if (drag) {
+      el.style.translate = `${dx}px ${dy}px`;
+      trash().classList.toggle("hot", overTrash(e.clientX, e.clientY));
+    }
+  });
+  const end = (e) => {
+    if (!down) return; down = false;
+    document.body.classList.remove("ch-dragging");
+    if (!drag) { openChatHead(key); return; }
+    el.classList.remove("dragging");
+    const hit = overTrash(e.clientX, e.clientY);
+    trash().classList.remove("hot");
+    if (hit) { el.classList.add("trashed"); setTimeout(() => chatHeadRemove(key, false), 220); }
+    else { el.classList.add("springback"); el.style.translate = ""; setTimeout(() => el.classList.remove("springback"), 450); }
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+}
+
 // Floating "new task" button: ripple + spin, then the new-task dialog. "N" opens it from anywhere.
 function wireFab() {
   const fab = $("#fab"); if (!fab) return;
@@ -741,6 +838,8 @@ function renderShell() {
       <main class="main" id="view"></main>
       <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
     </div>
+    <div class="chat-heads" id="chat-heads" aria-live="polite"></div>
+    <div class="ch-trash" id="ch-trash" aria-hidden="true">${icon("close")}</div>
     <button class="fab" id="fab" type="button" aria-label="${tx("مهمة جديدة")}" title="${tx("مهمة جديدة")} (N)">
       <span class="fab-ic">${icon("plus")}</span><span class="fab-label">${tx("مهمة جديدة")}</span><kbd class="fab-key">N</kbd>
     </button>`;
@@ -939,6 +1038,7 @@ function route() {
   if (!state.me || !$("#view")) return;
   const { page, params } = currentRoute();
   document.body.dataset.page = page;
+  if (page === "chat") { const w = params.get("with"), g = params.get("group"); if (w) chatHeadRemove("u:" + w); if (g) chatHeadRemove("g:" + g); }
   renderNav();
   const view = $("#view");
   if (page !== "chat") document.body.classList.remove("chat-thread");
@@ -3166,7 +3266,7 @@ function personTarget(t) {
   let z = null;
   try { z = t.closest(PERSON_ZONES); } catch { z = t.closest(".lb-row, .org-card, .conv, .sheet-me, .person"); }
   z ||= t.closest("[data-pid]");
-  if (!z || z.closest("#person-card")) return null;
+  if (!z || z.closest("#person-card") || z.closest(".chat-heads")) return null;
   const pid = z.dataset.pid || z.querySelector("[data-pid]")?.dataset.pid;
   return pid ? { el: z, pid } : null;
 }
@@ -3262,6 +3362,123 @@ document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#person
    Chat (1:1 direct messages, text only)
    ===================================================================== */
 const MSG_MAX = 4000;
+
+/* ---------- chat images (DB v24): up to 1.5 MB, private bucket ---------- */
+const CHAT_IMG_MAX = 1.5 * 1024 * 1024;
+const CHAT_IMG_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const chatImgUrls = new Map(); // storage path -> { url, exp }
+const hasImg = (m) => !!(m.attachment_path || m._local);
+const msgPreviewText = (m) => (m.body || "").trim() ? m.body.replace(/\s+/g, " ") : hasImg(m) ? "📷 " + tx("صورة") : "";
+// makes any picture fit the 1.5 MB limit (keeps small JPG/PNG/WebP/GIF as they are)
+async function prepChatImage(file) {
+  if (!file || !/^image\//.test(file.type)) throw new Error(tx("ابعت صورة بس (JPG أو PNG)"));
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch { throw new Error(tx("الصورة دي مش مدعومة، جرّب صورة JPG أو PNG")); }
+  const W = bmp.width, H = bmp.height;
+  try {
+    if (CHAT_IMG_TYPES.includes(file.type) && file.size <= CHAT_IMG_MAX) return { blob: file, type: file.type, w: W, h: H, size: file.size };
+    let max = 2560, q = 0.86;
+    for (let i = 0; i < 10; i++) {
+      const k = Math.min(1, max / Math.max(W, H)), w = Math.round(W * k), h = Math.round(H * k);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+      const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+      if (blob && blob.size <= CHAT_IMG_MAX) return { blob, type: "image/jpeg", w, h, size: blob.size };
+      if (q > 0.7) q -= 0.08; else max = Math.round(max * 0.8);
+    }
+    throw new Error(tx("الصورة أكبر من 1.5 ميجا"));
+  } finally { bmp.close?.(); }
+}
+async function uploadChatImage(att) {
+  const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[att.type] || "jpg";
+  const path = `${state.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await sb.storage.from("chat-files").upload(path, att.blob, { contentType: att.type, upsert: false });
+  if (error) throw error;
+  return path;
+}
+const imgMeta = (att) => att ? { w: att.w, h: att.h, size: att.size, type: att.type } : null;
+function msgImgHtml(m) {
+  if (!hasImg(m)) return "";
+  const a = m.attachment_meta || m._meta || {};
+  const ratio = a.w && a.h ? `aspect-ratio:${a.w} / ${a.h};` : "";
+  const cached = m.attachment_path && chatImgUrls.get(m.attachment_path);
+  const src = m._local || (cached && cached.exp > Date.now() ? cached.url : "");
+  return `<button type="button" class="msg-img-wrap ${src ? "" : "loading"}" data-view-img="${esc(m.attachment_path || "")}" aria-label="${tx("فتح الصورة")}">
+    <img class="msg-img" ${src ? `src="${esc(src)}"` : ""} data-path="${esc(m.attachment_path || "")}" style="${ratio}" alt="${tx("صورة")}" draggable="false"></button>`;
+}
+// fill in signed URLs for the images in a thread (one request for all of them)
+async function hydrateChatImgs(box) {
+  const imgs = $$("img.msg-img[data-path]", box).filter((i) => i.dataset.path && !i.getAttribute("src"));
+  if (!imgs.length) return;
+  const need = [...new Set(imgs.map((i) => i.dataset.path))].filter((p) => !(chatImgUrls.get(p)?.exp > Date.now()));
+  if (need.length) {
+    const { data } = await sb.storage.from("chat-files").createSignedUrls(need, 3600);
+    (data || []).forEach((d) => { if (d.signedUrl) chatImgUrls.set(d.path, { url: d.signedUrl, exp: Date.now() + 3500e3 }); });
+  }
+  imgs.forEach((i) => {
+    const u = chatImgUrls.get(i.dataset.path);
+    if (u) { i.src = u.url; i.closest(".msg-img-wrap")?.classList.remove("loading"); }
+  });
+}
+function wireMsgImgs(box) {
+  const pin = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
+  if (pin) $$("img.msg-img", box).forEach((i) => i.addEventListener("load", () => { box.scrollTop = box.scrollHeight; }, { once: true }));
+  $$("[data-view-img]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); const img = $("img", b); if (img?.src) openImageViewer(img.src); });
+  $$("img.msg-img", box).forEach((i) => { i.onload = () => i.closest(".msg-img-wrap")?.classList.remove("loading"); });
+  hydrateChatImgs(box);
+}
+function openImageViewer(src) {
+  $(".img-viewer")?.remove();
+  const v = document.createElement("div");
+  v.className = "img-viewer"; v.setAttribute("role", "dialog"); v.setAttribute("aria-modal", "true"); v.setAttribute("aria-label", tx("صورة"));
+  v.innerHTML = `<img src="${esc(src)}" alt="">
+    <div class="iv-bar"><a class="icon-btn" href="${esc(src)}" download target="_blank" rel="noopener" aria-label="${tx("تحميل")}" title="${tx("تحميل")}">${icon("download")}</a>
+    <button class="icon-btn" data-x aria-label="${tx("إغلاق")}">${icon("close")}</button></div>`;
+  document.body.append(v);
+  const close = () => { v.classList.add("closing"); setTimeout(() => v.remove(), 180); removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  addEventListener("keydown", onKey, true);
+  v.onclick = (e) => { if (e.target === v || e.target.closest("[data-x]")) close(); };
+}
+// composer: image button, paste and drag & drop, preview with remove
+function wireAttach(key, pane, refresh) {
+  (state.chatAttach ||= {});
+  const box = $("#attach-preview", pane), input = $("#attach-in", pane);
+  const draw = () => {
+    const a = state.chatAttach[key];
+    box.hidden = !a;
+    box.innerHTML = a ? `<div class="ap-card"><img src="${esc(a.url)}" alt=""><div class="ap-info"><b>${tx("صورة")}</b><small>${(a.size / 1024 / 1024).toFixed(2)} MB · ${a.w}×${a.h}</small></div>
+      <button type="button" class="icon-btn" id="attach-x" aria-label="${tx("شيل الصورة")}">${icon("close", "sm")}</button></div>` : "";
+    const x = $("#attach-x", box); if (x) x.onclick = () => { URL.revokeObjectURL(a.url); delete state.chatAttach[key]; draw(); refresh(); };
+    refresh();
+  };
+  const take = async (file) => {
+    if (!file) return;
+    const btn = $("#attach-btn", pane); btn?.classList.add("busy");
+    try {
+      const a = await prepChatImage(file);
+      if (state.chatAttach[key]) URL.revokeObjectURL(state.chatAttach[key].url);
+      state.chatAttach[key] = { ...a, url: URL.createObjectURL(a.blob) };
+      draw(); $("#msg-in", pane)?.focus();
+    } catch (e) { toast(friendly(e), true); }
+    btn?.classList.remove("busy");
+  };
+  $("#attach-btn", pane).onclick = () => input.click();
+  input.onchange = () => { take(input.files[0]); input.value = ""; };
+  $("#msg-in", pane).addEventListener("paste", (e) => {
+    const f = [...(e.clipboardData?.files || [])].find((x) => x.type.startsWith("image/"));
+    if (f) { e.preventDefault(); take(f); }
+  });
+  const zone = $("#chat-pane");
+  zone.ondragover = (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === "file")) { e.preventDefault(); zone.classList.add("drop-on"); } };
+  zone.ondragleave = (e) => { if (!zone.contains(e.relatedTarget)) zone.classList.remove("drop-on"); };
+  zone.ondrop = (e) => { e.preventDefault(); zone.classList.remove("drop-on"); take([...e.dataTransfer.files].find((x) => x.type.startsWith("image/"))); };
+  draw();
+}
+const takeAttach = (key) => { const a = state.chatAttach?.[key]; if (a) delete state.chatAttach[key]; return a || null; };
+const attachHtml = () => `<input type="file" id="attach-in" accept="image/*" hidden>
+      <button type="button" class="icon-btn attach-btn" id="attach-btn" aria-label="${tx("ابعت صورة")}" title="${tx("ابعت صورة (لحد 1.5 ميجا)")}">${icon("image")}</button>`;
 async function loadMessages() {
   const { data, error } = await sb.from("messages").select("*").order("created_at", { ascending: false }).limit(3000);
   if (!error) state.msgs = (data || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -3334,7 +3551,7 @@ function fillConvs(activeId, activeGroup = currentRoute().params.get("group")) {
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "ar"));
   const row = (p, last) => {
     const n = chatUnread(p.id);
-    const preview = last ? (last.sender_id === state.me.id ? tx("انت: ") : "") + (last.deleted_at ? tx("اتمسحت الرسالة دي") : last.body.replace(/\s+/g, " ")) : (p.job_title || "");
+    const preview = last ? (last.sender_id === state.me.id ? tx("انت: ") : "") + (last.deleted_at ? tx("اتمسحت الرسالة دي") : msgPreviewText(last)) : (p.job_title || "");
     return `<a class="conv ${p.id === activeId ? "on" : ""} ${n ? "unread" : ""}" href="#/chat?with=${p.id}">
       ${avatar(p)}
       <span class="conv-main"><span class="conv-top"><b><bdi>${esc(p.full_name)}</bdi></b>${last ? `<time>${fmtListTime(last.created_at)}</time>` : ""}</span>
@@ -3348,7 +3565,7 @@ function fillConvs(activeId, activeGroup = currentRoute().params.get("group")) {
   const grow = ({ g, last }) => {
     const n = groupUnread(g.id);
     const who = last ? (last.sender_id === state.me.id ? tx("انت") : (profile(last.sender_id)?.full_name.split(" ")[0] || "")) : "";
-    const preview = last ? `${who}: ${last.deleted_at ? tx("اتمسحت الرسالة دي") : last.body.replace(/\s+/g, " ")}` : tx("{n} أعضاء", { n: g.members.length });
+    const preview = last ? `${who}: ${last.deleted_at ? tx("اتمسحت الرسالة دي") : msgPreviewText(last)}` : tx("{n} أعضاء", { n: g.members.length });
     return `<a class="conv ${g.id === activeGroup ? "on" : ""} ${n ? "unread" : ""}" href="#/chat?group=${g.id}">
       ${groupAvatar(g)}
       <span class="conv-main"><span class="conv-top"><b><bdi>${esc(g.name)}</bdi></b>${last ? `<time>${fmtListTime(last.created_at)}</time>` : ""}</span>
@@ -3375,7 +3592,9 @@ function renderThread(p) {
       <button class="icon-btn thread-clear" id="thread-clear" title="مسح المحادثة عندي" aria-label="مسح المحادثة عندي">${icon("trash")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
+    <div class="attach-preview" id="attach-preview" hidden></div>
     <form class="composer" id="composer">
+      ${attachHtml()}
       <textarea class="input" id="msg-in" rows="1" maxlength="${MSG_MAX}" placeholder="اكتب رسالة…" aria-label="اكتب رسالة">${esc(draft)}</textarea>
       <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
     </form>`;
@@ -3393,7 +3612,9 @@ function renderThread(p) {
   const ta = $("#msg-in"), btn = $(".send-btn", pane);
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
   grow();
-  ta.oninput = () => { state.chatDrafts[p.id] = ta.value; btn.disabled = !ta.value.trim(); grow(); };
+  const refresh = () => { btn.disabled = !ta.value.trim() && !state.chatAttach?.[p.id]; };
+  ta.oninput = () => { state.chatDrafts[p.id] = ta.value; refresh(); grow(); };
+  wireAttach(p.id, pane, refresh);
   ta.onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); $("#composer").requestSubmit(); }
   };
@@ -3420,7 +3641,7 @@ function fillThread(pid, jump = false) {
     const canAct = !m._pending && !m._failed;
     html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""} ${m.deleted_at ? "deleted" : ""}" data-mid="${m.id}">
       <div class="bubble-row">
-        <div class="bubble">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `<span class="txt" dir="auto">${msgHtml(m.body)}</span>`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
+        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
         ${canAct ? `<button class="msg-act" data-act="${m.id}" aria-label="${tx("خيارات الرسالة")}" title="${tx("خيارات الرسالة")}">${icon("dots", "sm")}</button>` : ""}
       </div>
       ${m._failed ? `<button class="retry" data-retry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
@@ -3429,6 +3650,7 @@ function fillThread(pid, jump = false) {
   }
     box.innerHTML = html;
   if (jump || nearBottom) box.scrollTop = box.scrollHeight;
+  wireMsgImgs(box);
   $$("[data-act]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openMsgActions(b.dataset.act); });
   // long-press / right-click on a bubble opens the same menu
   $$(".msg[data-mid] .bubble", box).forEach((bub) => {
@@ -3444,7 +3666,7 @@ function fillThread(pid, jump = false) {
     const m = state.msgs.find((x) => x.id === b.dataset.retry);
     if (!m) return;
     state.msgs = state.msgs.filter((x) => x !== m);
-    sendMessage(m.recipient_id, null, m.body);
+    sendMessage(m.recipient_id, null, m.body, m._att);
   });
 }
 
@@ -3454,9 +3676,9 @@ function openMsgActions(id) {
   const mine = m.sender_id === state.me.id;
   const ov = openModal(`
     <div class="sheet-grab" aria-hidden="true"></div>
-    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(m.body.length > 160 ? m.body.slice(0, 160) + "…" : m.body)}</div>
+    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
     <div class="sheet-list">
-      ${!m.deleted_at ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
+      ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
       <button class="sheet-item danger" data-do="me"><span class="si-ic">${icon("trash")}</span><span>مسح عندي</span></button>
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
     </div>
@@ -3478,22 +3700,29 @@ async function deleteMessages(m, forEveryone) {
   const { data, error } = await sb.rpc("delete_messages", { p_ids: [m.id], p_for_everyone: forEveryone });
   if (error) return toast(friendly(error), true);
   if (!data) return toast(tx("مقدرتش أمسح الرسالة"), true);
-  if (forEveryone) { m.body = ""; m.deleted_at = new Date().toISOString(); }
+  if (forEveryone) { m.body = ""; m.deleted_at = new Date().toISOString(); m.attachment_path = null; m.attachment_meta = null; }
   else if (m.sender_id === state.me.id) m.deleted_for_sender = true; else m.deleted_for_recipient = true;
   const pid = partnerOf(m);
   fillThread(pid); fillConvs(pid); renderChatBadges();
   toast(tx(forEveryone ? "اتمسحت عند الكل" : "اتمسحت عندك"));
 }
 
-async function sendMessage(pid, ta, bodyOverride) {
+async function sendMessage(pid, ta, bodyOverride, attOverride) {
   const body = (bodyOverride ?? ta.value).trim();
-  if (!body) return;
+  const att = attOverride ?? (ta ? takeAttach(pid) : null);
+  if (!body && !att) return;
   if (body.length > MSG_MAX) return toast(tx("الرسالة طويلة أوي"), true);
-  const temp = { id: "tmp-" + Math.random().toString(36).slice(2), sender_id: state.me.id, recipient_id: pid, body, created_at: new Date().toISOString(), read_at: null, _pending: true };
+  const temp = { id: "tmp-" + Math.random().toString(36).slice(2), sender_id: state.me.id, recipient_id: pid, body, created_at: new Date().toISOString(), read_at: null, _pending: true,
+    _local: att?.url || null, _meta: imgMeta(att), _att: att };
   state.msgs.push(temp);
-  if (ta) { ta.value = ""; state.chatDrafts[pid] = ""; ta.style.height = "auto"; ta.focus(); $(".send-btn")?.setAttribute("disabled", ""); }
+  if (ta) { ta.value = ""; state.chatDrafts[pid] = ""; ta.style.height = "auto"; ta.focus(); $(".send-btn")?.setAttribute("disabled", ""); const ap = $("#attach-preview"); if (ap) { ap.hidden = true; ap.innerHTML = ""; } }
   fillThread(pid, true); fillConvs(pid);
-  const { data, error } = await sb.from("messages").insert({ sender_id: state.me.id, recipient_id: pid, body }).select().single();
+  let data = null, error = null;
+  try {
+    const path = att ? await uploadChatImage(att) : null;
+    if (path) chatImgUrls.set(path, { url: att.url, exp: Date.now() + 3500e3 });
+    ({ data, error } = await sb.from("messages").insert({ sender_id: state.me.id, recipient_id: pid, body, attachment_path: path, attachment_meta: imgMeta(att) }).select().single());
+  } catch (e) { error = e; }
   if (error || !data) { temp._pending = false; temp._failed = true; toast(friendly(error || new Error("send failed")), true); }
   else {
     const i = state.msgs.indexOf(temp);
@@ -3542,8 +3771,7 @@ function onMessageRealtime(evt, m) {
   if (r.page === "chat") fillConvs(openWith);
   renderChatBadges();
   if (evt === "INSERT" && m.recipient_id === state.me.id && openWith !== pid) {
-    const who = profile(m.sender_id)?.full_name || tx("حد من الفريق");
-    toast(tx("رسالة من {name}: {text}", { name: who, text: m.body.length > 60 ? m.body.slice(0, 60) + "…" : m.body }));
+    chatHeadPush("u", m.sender_id, msgPreviewText(m));
   }
 }
 document.addEventListener("visibilitychange", () => {
@@ -4206,7 +4434,9 @@ function renderGroupThread(g) {
       <button class="icon-btn thread-clear" id="g-info2" title="${tx("بيانات المجموعة")}" aria-label="${tx("بيانات المجموعة")}">${icon("users")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
+    <div class="attach-preview" id="attach-preview" hidden></div>
     <form class="composer" id="composer">
+      ${attachHtml()}
       <textarea class="input" id="msg-in" rows="1" maxlength="${MSG_MAX}" placeholder="اكتب رسالة…" aria-label="اكتب رسالة">${esc(draft)}</textarea>
       <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
     </form>`;
@@ -4215,7 +4445,9 @@ function renderGroupThread(g) {
   const ta = $("#msg-in"), btn = $(".send-btn", pane);
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
   grow();
-  ta.oninput = () => { state.chatDrafts[key] = ta.value; btn.disabled = !ta.value.trim(); grow(); };
+  const refresh = () => { btn.disabled = !ta.value.trim() && !state.chatAttach?.[key]; };
+  ta.oninput = () => { state.chatDrafts[key] = ta.value; refresh(); grow(); };
+  wireAttach(key, pane, refresh);
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); $("#composer").requestSubmit(); } };
   $("#composer").onsubmit = (e) => { e.preventDefault(); sendGroupMessage(g.id, ta); };
   if (matchMedia("(hover: hover)").matches) ta.focus();
@@ -4243,7 +4475,7 @@ function fillGroupThread(gid, jump = false) {
     html += `<div class="msg ${mine ? "mine" : "theirs"} ${grouped ? "grouped" : ""} ${m._failed ? "failed" : ""} ${m.deleted_at ? "deleted" : ""} g-msg" data-mid="${m.id}">
       ${!mine && !grouped ? `<div class="g-sender">${avatar(who, "sm")}<b style="color:${senderColor(m.sender_id)}">${esc(who?.full_name || tx("عضو سابق"))}</b></div>` : ""}
       <div class="bubble-row">
-        <div class="bubble">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `<span class="txt" dir="auto">${msgHtml(m.body)}</span>`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
+        <div class="bubble ${!m.deleted_at && hasImg(m) ? "has-img" : ""} ${!m.deleted_at && hasImg(m) && !(m.body || "").trim() ? "img-only" : ""}">${m.deleted_at ? `<span class="txt gone">${icon("ban", "sm")}${tx(mine ? "انت مسحت الرسالة دي" : "اتمسحت الرسالة دي")}</span>` : `${msgImgHtml(m)}${(m.body || "").trim() ? `<span class="txt" dir="auto">${msgHtml(m.body)}</span>` : ""}`}<span class="meta"><time>${fmtClock(m.created_at)}</time>${m.deleted_at ? "" : status}</span></div>
         ${canAct ? `<button class="msg-act" data-gact="${m.id}" aria-label="${tx("خيارات الرسالة")}" title="${tx("خيارات الرسالة")}">${icon("dots", "sm")}</button>` : ""}
       </div>
       ${m._failed ? `<button class="retry" data-gretry="${m.id}">${tx("مااتبعتتش — اضغط تعيد")}</button>` : ""}
@@ -4252,6 +4484,7 @@ function fillGroupThread(gid, jump = false) {
   }
   box.innerHTML = html;
   if (jump || nearBottom) box.scrollTop = box.scrollHeight;
+  wireMsgImgs(box);
   $$("[data-gact]", box).forEach((b) => b.onclick = (e) => { e.stopPropagation(); openGroupMsgActions(b.dataset.gact); });
   $$(".msg[data-mid] .bubble", box).forEach((bub) => {
     const id = bub.closest(".msg").dataset.mid;
@@ -4265,21 +4498,28 @@ function fillGroupThread(gid, jump = false) {
   $$("[data-gretry]", box).forEach((b) => b.onclick = () => {
     const m = state.gmsgs.find((x) => x.id === b.dataset.gretry); if (!m) return;
     state.gmsgs = state.gmsgs.filter((x) => x !== m);
-    sendGroupMessage(m.group_id, null, m.body);
+    sendGroupMessage(m.group_id, null, m.body, m._att);
   });
 }
 const SENDER_COLORS = ["#0B6FC4", "#C2410C", "#7A4FD0", "#17996A", "#DB2777", "#0E9AA7", "#B45309", "#4F46E5"];
 const senderColor = (id) => SENDER_COLORS[[...String(id)].reduce((s, c) => s + c.charCodeAt(0), 0) % SENDER_COLORS.length];
 
-async function sendGroupMessage(gid, ta, bodyOverride) {
+async function sendGroupMessage(gid, ta, bodyOverride, attOverride) {
   const body = (bodyOverride ?? ta.value).trim();
-  if (!body) return;
+  const att = attOverride ?? (ta ? takeAttach("g:" + gid) : null);
+  if (!body && !att) return;
   if (body.length > MSG_MAX) return toast(tx("الرسالة طويلة أوي"), true);
-  const temp = { id: "tmp-" + Math.random().toString(36).slice(2), group_id: gid, sender_id: state.me.id, body, created_at: new Date().toISOString(), _pending: true };
+  const temp = { id: "tmp-" + Math.random().toString(36).slice(2), group_id: gid, sender_id: state.me.id, body, created_at: new Date().toISOString(), _pending: true,
+    _local: att?.url || null, _meta: imgMeta(att), _att: att };
   state.gmsgs.push(temp);
-  if (ta) { ta.value = ""; state.chatDrafts["g:" + gid] = ""; ta.style.height = "auto"; ta.focus(); $(".send-btn")?.setAttribute("disabled", ""); }
+  if (ta) { ta.value = ""; state.chatDrafts["g:" + gid] = ""; ta.style.height = "auto"; ta.focus(); $(".send-btn")?.setAttribute("disabled", ""); const ap = $("#attach-preview"); if (ap) { ap.hidden = true; ap.innerHTML = ""; } }
   fillGroupThread(gid, true); fillConvs(null, gid);
-  const { data, error } = await sb.from("group_messages").insert({ group_id: gid, sender_id: state.me.id, body }).select().single();
+  let data = null, error = null;
+  try {
+    const path = att ? await uploadChatImage(att) : null;
+    if (path) chatImgUrls.set(path, { url: att.url, exp: Date.now() + 3500e3 });
+    ({ data, error } = await sb.from("group_messages").insert({ group_id: gid, sender_id: state.me.id, body, attachment_path: path, attachment_meta: imgMeta(att) }).select().single());
+  } catch (e) { error = e; }
   if (error || !data) { temp._pending = false; temp._failed = true; toast(friendly(error || new Error("send failed")), true); }
   else {
     const i = state.gmsgs.indexOf(temp);
@@ -4308,9 +4548,9 @@ function openGroupMsgActions(id) {
   const mine = m.sender_id === state.me.id;
   const ov = openModal(`
     <div class="sheet-grab" aria-hidden="true"></div>
-    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(m.body.length > 160 ? m.body.slice(0, 160) + "…" : m.body)}</div>
+    <div class="msg-preview ${m.deleted_at ? "gone" : ""}" dir="auto">${m.deleted_at ? tx("اتمسحت الرسالة دي") : esc(msgPreviewText(m).length > 160 ? msgPreviewText(m).slice(0, 160) + "…" : msgPreviewText(m))}</div>
     <div class="sheet-list">
-      ${!m.deleted_at ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
+      ${!m.deleted_at && (m.body || "").trim() ? `<button class="sheet-item" data-do="copy"><span class="si-ic">${icon("copy")}</span><span>نسخ النص</span></button>` : ""}
       ${!mine && profile(m.sender_id) ? `<a class="sheet-item" href="#/chat?with=${m.sender_id}" data-do="dm"><span class="si-ic">${icon("chat")}</span><span>${tx("رد على {name} في الخاص", { name: esc(profile(m.sender_id).full_name.split(" ")[0]) })}</span></a>` : ""}
       ${mine && !m.deleted_at ? `<button class="sheet-item danger" data-do="all"><span class="si-ic">${icon("ban")}</span><span>مسح عند الكل</span></button>` : ""}
     </div>
@@ -4327,7 +4567,7 @@ function openGroupMsgActions(id) {
     if (!ok) return;
     const { data, error } = await sb.rpc("delete_group_message", { p_id: m.id });
     if (error || !data) return toast(error ? friendly(error) : tx("مقدرتش أمسح الرسالة"), true);
-    m.body = ""; m.deleted_at = new Date().toISOString();
+    m.body = ""; m.deleted_at = new Date().toISOString(); m.attachment_path = null; m.attachment_meta = null;
     fillGroupThread(m.group_id); fillConvs(null, m.group_id); toast(tx("اتمسحت عند الكل"));
   };
 }
@@ -4441,8 +4681,7 @@ function onGroupRealtime(table, evt, row, old) {
       state.gmsgs.push(m);
       if (openG === m.group_id) { fillGroupThread(m.group_id); markGroupRead(m.group_id); }
       else if (m.sender_id !== state.me.id) {
-        const g = groupById(m.group_id);
-        toast(`${g?.name || tx("مجموعة")} · ${profile(m.sender_id)?.full_name?.split(" ")[0] || ""}: ${m.body.length > 60 ? m.body.slice(0, 60) + "…" : m.body}`);
+        chatHeadPush("g", m.group_id, `${profile(m.sender_id)?.full_name?.split(" ")[0] || ""}: ${msgPreviewText(m)}`, m.sender_id);
       }
     } else if (evt === "UPDATE" && i >= 0) { state.gmsgs[i] = { ...state.gmsgs[i], ...m }; if (openG === m.group_id) fillGroupThread(m.group_id); }
     if (r.page === "chat") fillConvs(r.params.get("with"), openG);
