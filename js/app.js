@@ -699,6 +699,29 @@ function renderLogin(message = "") {
 /* =====================================================================
    Shell + routing
    ===================================================================== */
+// Floating "new task" button: ripple + spin, then the new-task dialog. "N" opens it from anywhere.
+function wireFab() {
+  const fab = $("#fab"); if (!fab) return;
+  fab.onclick = (e) => {
+    const r = fab.getBoundingClientRect(), d = Math.max(r.width, r.height);
+    const rip = document.createElement("span");
+    rip.className = "fab-ripple";
+    const x = (e.clientX || r.left + r.width / 2) - r.left - d / 2, y = (e.clientY || r.top + r.height / 2) - r.top - d / 2;
+    rip.style.cssText = `width:${d}px;height:${d}px;left:${x}px;top:${y}px`;
+    fab.append(rip); setTimeout(() => rip.remove(), 650);
+    fab.classList.remove("pop"); void fab.offsetWidth; fab.classList.add("pop");
+    setTimeout(() => openNewTask(), reduceMotion ? 0 : 160);
+  };
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "n" && e.key !== "N" && e.key !== "ى") return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  const t = e.target;
+  if (t.closest?.("input, textarea, select, [contenteditable]") || $("#modal-root .overlay") || $(".overlay.confirm-layer")) return;
+  if (!state.me || !$("#fab")) return;
+  e.preventDefault(); $("#fab").click();
+});
+
 function renderShell() {
   splashDone();
   $("#root").innerHTML = `
@@ -717,7 +740,11 @@ function renderShell() {
       </aside>
       <main class="main" id="view"></main>
       <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
-    </div>`;
+    </div>
+    <button class="fab" id="fab" type="button" aria-label="${tx("مهمة جديدة")}" title="${tx("مهمة جديدة")} (N)">
+      <span class="fab-ic">${icon("plus")}</span><span class="fab-label">${tx("مهمة جديدة")}</span><kbd class="fab-key">N</kbd>
+    </button>`;
+  wireFab();
   window.onhashchange = () => { state.animate = true; route(); };
   window.onresize = () => { placeTabPill(document); sizeBoard(); sizeChat(); fitNav(); };
   state.animate = true;
@@ -911,6 +938,7 @@ function currentRoute() {
 function route() {
   if (!state.me || !$("#view")) return;
   const { page, params } = currentRoute();
+  document.body.dataset.page = page;
   renderNav();
   const view = $("#view");
   if (page !== "chat") document.body.classList.remove("chat-thread");
