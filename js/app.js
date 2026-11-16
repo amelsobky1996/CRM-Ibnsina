@@ -650,7 +650,7 @@ function renderNav() {
       </div>
     </div>`;
   renderBell();
-  fitNav(); requestAnimationFrame(fitNav);
+  fitNav(); requestAnimationFrame(fitNav); watchNav();
   document.fonts?.ready.then(fitNav);
   const acctBtn = $("#acct-btn"), acctMenu = $("#acct-menu");
   const closeAcct = () => { acctMenu.hidden = true; acctBtn.setAttribute("aria-expanded", "false"); };
@@ -707,6 +707,32 @@ function placeNavInd() {
   navIndAt = to;
 }
 addEventListener("scroll", () => $(".side")?.classList.toggle("scrolled", scrollY > 6), { passive: true });
+// link widths change once the web font arrives (or the bar goes tight/compact): re-measure the pill without animating
+let navRO = null, navRaf = 0;
+function snapNavInd() {
+  cancelAnimationFrame(navRaf);
+  navRaf = requestAnimationFrame(() => {
+    const ind = $("#nav .nav-ind"); if (!ind) return;
+    ind.style.transition = "none"; navIndAt = null; placeNavInd();
+    void ind.offsetWidth; ind.style.transition = "";
+  });
+}
+function watchNav() {
+  const nav = $("#nav"); if (!nav || !window.ResizeObserver) return;
+  navRO?.disconnect();
+  const seen = new WeakMap();
+  navRO = new ResizeObserver((entries) => {
+    let changed = false;
+    for (const e of entries) {
+      const w = Math.round(e.contentRect.width), was = seen.get(e.target);
+      if (was !== undefined && was !== w) changed = true;
+      seen.set(e.target, w);
+    }
+    if (changed) snapNavInd();
+  });
+  navRO.observe(nav); $$("a", nav).forEach((a) => navRO.observe(a));
+}
+document.fonts?.addEventListener?.("loadingdone", () => { fitNavInner(); snapNavInd(); });
 
 // Desktop top bar: links that don't fit move into the "More" dropdown
 function fitNav() { fitNavInner(); placeNavInd(); }
