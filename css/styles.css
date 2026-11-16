@@ -2667,3 +2667,14 @@ body[data-page="chat"] .mini-chat { display: none !important; }
 .msg-menu .sheet-item.danger .si-ic { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
 .msg-menu .si-ic .i { width: 16px; height: 16px; }
 .msg-act.menu-on { opacity: 1 !important; background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
+
+/* Arabic: my messages on the right, incoming ones on the left */
+html[dir="rtl"] .msg.mine { align-self: flex-start; align-items: flex-start; }
+html[dir="rtl"] .msg.theirs { align-self: flex-end; align-items: flex-end; }
+html[dir="rtl"] .msg.mine .bubble { border-start-end-radius: 18px; border-start-start-radius: 6px; }
+html[dir="rtl"] .msg.theirs .bubble { border-start-start-radius: 18px; border-start-end-radius: 6px; }
+html[dir="rtl"] .msg.grouped.mine .bubble { border-start-start-radius: 18px; }
+html[dir="rtl"] .msg.grouped.theirs .bubble { border-start-end-radius: 18px; }
+html[dir="rtl"] .msg.mine .bubble-row { flex-direction: row; }
+html[dir="rtl"] .msg.theirs .bubble-row { flex-direction: row-reverse; }
+html[dir="rtl"] .bubble.img-only .meta { inset-inline-end: auto; inset-inline-start: 8px; }
