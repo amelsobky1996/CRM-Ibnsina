@@ -18,6 +18,7 @@ const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "�
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
   restore: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6"/><path d="M4 4v4.6h4.6"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
@@ -261,6 +262,8 @@ async function loadDelReqs() {
   state.delReqs = error ? [] : data || [];
   if (!error) state.archiveReady = true;
 }
+// the archive lists only tasks I'm part of (admins: all); everyone can still open any task read-only
+const myArchived = () => (state.archived || []).filter((t) => state.me.is_admin || canWorkOn(t) || (t.mentions || []).includes(state.me.id));
 const delReqOf = (t) => (state.delReqs || []).find((r) => r.task_id === t.id);
 const findTask = (id) => state.tasks.find((x) => x.id === id) || (state.archived || []).find((x) => x.id === id);
 // people @mentioned in a task description (matched on "@Full Name")
@@ -963,7 +966,7 @@ function tasksForTab(tab) {
     case "mine":    return state.tasks.filter((t) => t.assignees.includes(me) || (t.mentions || []).includes(me));
     case "created": return state.tasks.filter((t) => t.created_by === me);
     case "team":    return state.tasks.filter((t) => t.assignees.some((u) => team.has(u)));
-    case "archived": return state.archived || [];
+    case "archived": return myArchived();
     default:        return state.tasks;
   }
 }
@@ -1009,7 +1012,7 @@ function renderTasks() {
   const v = state.view;
   const tabs = [["mine", "مسندة لي"], ["created", "أنشأتها"]];
   if (isManager()) tabs.push(["team", "مهام فريقي"]);
-  tabs.push(["all", state.me.is_admin ? tx("كل مهام الموظفين") : "الكل"]);
+  tabs.push(["all", tx("كل مهام الموظفين")]);
   // admins land on everyone's tasks; everybody else on their own
   const defTab = state.me.is_admin ? "all" : "mine";
   const arch = v.tab === "archived" && state.archiveReady;
@@ -1061,14 +1064,14 @@ function renderTasks() {
           <div class="tf-pop" id="tf-pop" role="dialog" aria-label="${tx("فلتر")}" hidden>
             <h4>${tx("المهام")}</h4>
             <div class="tf-opts">${tabs.map(([k, l]) => `<button class="tf-opt ${v.tab === k ? "on" : ""}" data-ftab="${k}"><span>${l}</span><b>${tasksForTab(k).length}</b></button>`).join("")}</div>
-            ${state.archiveReady ? `<button class="tf-opt tf-arch ${arch ? "on" : ""}" data-ftab="archived">${icon("archive", "sm")}<span>${tx("المهام المؤرشفة")}</span><b>${(state.archived || []).length}</b></button>` : ""}
+            ${state.archiveReady ? `<button class="tf-opt tf-arch ${arch ? "on" : ""}" data-ftab="archived">${icon("archive", "sm")}<span>${tx("المهام المؤرشفة")}</span><b>${myArchived().length}</b></button>` : ""}
             <h4>${tx("الحالة")}</h4>
             <div class="tf-stats">
               ${[["open", "مفتوحة", "inbox", "", stats.open], ["overdue", "متأخرة", "flame", "t-bad", stats.overdue], ["week", "خلال 7 أيام", "clock", "t-warn", stats.week], ["done", "مكتملة", "check", "t-ok", stats.done]]
                 .map(([k, l, ic, tone, n]) => `<button class="tf-stat ${tone} ${v.status === k ? "on" : ""}" data-fst="${k}" aria-pressed="${v.status === k}"><span class="ico">${icon(ic, "sm")}</span><b>${n}</b><span>${l}</span></button>`).join("")}
             </div>
-            ${isManager() ? `<h4>${tx("الموظف")}</h4>
-            <select class="input" id="tf-user" aria-label="${tx("الموظف")}"><option value="">${tx("كل الموظفين")}</option>${manageable().filter((p) => p.active && p.id !== state.me.id).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar")).map((p) => `<option value="${p.id}" ${v.user === p.id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}</select>` : ""}
+            <h4>${tx("الموظف")}</h4>
+            <select class="input" id="tf-user" aria-label="${tx("الموظف")}"><option value="">${tx("كل الموظفين")}</option>${state.profiles.filter((p) => p.active && p.id !== state.me.id).sort((a, b) => a.full_name.localeCompare(b.full_name, "ar")).map((p) => `<option value="${p.id}" ${v.user === p.id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}</select>
             ${v.status !== "all" || v.tab !== defTab || v.user ? `<button class="tf-reset" id="tf-reset">${icon("close", "sm")}${tx("مسح الفلتر")}</button>` : ""}
           </div>
         </div>
@@ -1501,6 +1504,8 @@ function openTask(id) {
   const archived = !!t.archived_at;
   const manage = !archived && canManageTask(t), work = !archived && canWorkOn(t), edit = work;
   const req = !archived && delReqOf(t);
+  // colleagues who aren't on the task see it read-only (no comments / files)
+  const engage = !archived && (work || isMentioned(t));
   const creator = profile(t.created_by);
   const dropText = tx("اسحب الملفات هنا أو اضغط للاختيار (حتى {mb} ميجا)", { mb: MAX_FILE_MB });
   const ov = openModal(`
@@ -1509,6 +1514,7 @@ function openTask(id) {
       <button class="icon-btn" data-close aria-label="إغلاق" style="color:var(--ink-2)">${icon("close")}</button>
     </div>
     <div id="blocked-banner"></div>
+    ${!archived && !engage ? `<div class="view-note">${icon("eye", "sm")}<span>${tx("بتشوف المهمة دي للعرض بس، التعديل والتعليقات للمسؤولين عنها")}</span></div>` : ""}
     ${archived ? `<div class="arch-note ${t.archive_kind === "deleted" ? "del" : ""}">${icon(t.archive_kind === "deleted" ? "trash" : "archive")}
       <div><b>${t.archive_kind === "deleted" ? tx("المهمة دي محذوفة") : tx("المهمة دي مؤرشفة")}</b><span>${tx("{name} · {when}", { name: esc(profile(t.archived_by)?.full_name || "—"), when: fmtDateTime(t.archived_at) })}</span></div>
       ${canRestoreTask(t) ? `<button type="button" class="btn sm" id="td-restore">${icon("restore", "sm")}${tx("استرجاع")}</button>` : ""}</div>` : ""}
@@ -1577,11 +1583,11 @@ function openTask(id) {
       </div>
       <div id="dtab-comments">
         <div id="c-list" class="comments"><div class="spinner" style="margin:10px auto"></div></div>
-        <form id="c-form" class="c-form">
+        ${engage ? `<form id="c-form" class="c-form">
           ${avatar(state.me, "sm")}
           <textarea class="input" name="body" rows="2" maxlength="4000" placeholder="اكتب تعليق…" aria-label="اكتب تعليق…"></textarea>
           <button class="btn primary sm" type="submit" aria-label="إرسال">${icon("send", "sm")}</button>
-        </form>
+        </form>` : ""}
       </div>
       <div id="dtab-activity" hidden><div id="a-list" class="timeline"></div></div>
     </div>
@@ -2362,7 +2368,8 @@ function wireDrawerExtras(t, ov, work) {
       loadComments();
     });
   };
-  const cForm = $("#c-form", ov), ta = $("textarea", cForm);
+  const cForm = $("#c-form", ov), ta = cForm && $("textarea", cForm);
+  if (cForm) {
   const mention = wireMentions(ta, cForm, mentionCandidates(t));
   ta.addEventListener("keydown", (e) => { if (e.defaultPrevented) return; if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); cForm.requestSubmit(); } });
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; };
@@ -2378,6 +2385,7 @@ function wireDrawerExtras(t, ov, work) {
     drawerDirty = true;
     loadComments();
   };
+  }
 
   // ---- activity
   const aList = $("#a-list", ov);
@@ -2913,7 +2921,7 @@ async function fillLeaderboard(animate) {
   const mineRow = people.find((x) => x.user_id === me);
   const ms = $("#my-score b");
   if (ms) ms.textContent = mineRow?.score === null || !mineRow ? "—" : mineRow.score + "%";
-  const canOpen = (id) => id === me || state.me.is_admin || isAncestor(me, id);
+  const canOpen = () => true; // everyone can view colleagues' tasks (read-only)
 
   const row = (x, i) => {
     const den = x.on_time + x.late + x.overdue, lv = levelOf(x.score);
@@ -3142,7 +3150,7 @@ function showPersonCard(el, pid = el.dataset.pid) {
   const me = state.me.id;
   const mgr = profile(p.manager_id);
   const team = descendants(p.id).length;
-  const canWork = p.id === me || state.me.is_admin || isAncestor(me, p.id);
+  const canWork = true; // everyone can view colleagues' tasks (read-only)
   const mine = canWork ? state.tasks.filter((t) => t.assignees.includes(p.id)) : [];
   const open = mine.filter((t) => t.status !== "done").length;
   const late = mine.filter(isOverdue).length;
@@ -5067,7 +5075,7 @@ function renderOrg() {
   const me = state.me.id;
   const roots = state.profiles.filter((p) => !p.manager_id || !profile(p.manager_id));
   const collapsed = state.orgCollapsed || (state.orgCollapsed = new Set());
-  const canSeeWork = (p) => p.id === me || state.me.is_admin || isAncestor(me, p.id);
+  const canSeeWork = () => true; // everyone can view colleagues' tasks (read-only)
   const levels = [];
 
   const node = (p, depth = 0) => {

@@ -378,3 +378,6 @@ create trigger projects_lock_created_by before update on public.projects for eac
 -- v22 (migrations/v22_archive_delete_requests.sql): tasks.archived_at / archived_by / archive_kind,
 -- task_delete_requests, archive_task / restore_task / decide_delete_request / cancel_delete_request,
 -- notification types delete_request + delete_decision; archived tasks left out of reminders, scores and the weekly report.
+
+-- v23 (migrations/v23_view_all_tasks.sql): every active user can VIEW every task (read-only);
+-- can_engage_task (work or @mentioned) gates comments / file uploads; can_work_task gates changes.

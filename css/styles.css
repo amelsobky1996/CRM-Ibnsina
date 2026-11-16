@@ -2208,3 +2208,8 @@ html[dir="rtl"] :is(input[type=email], input[type=url], input[type=password], in
 .crop-tools input[type=range] { flex: 1; accent-color: var(--brand); }
 .crop-tools .icon-btn { color: var(--ink-2); flex: none; }
 .crop-tools [data-rot] { margin-inline-start: 6px; }
+
+/* read-only task (colleague viewing) */
+.view-note { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 9px 12px; border-radius: 12px; font-size: 13px;
+  color: var(--ink-2); background: color-mix(in srgb, var(--brand) 7%, var(--card)); border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--line)); }
+.view-note svg { flex: none; color: var(--brand); }
