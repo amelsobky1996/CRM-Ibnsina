@@ -18,6 +18,8 @@ const genderPill = (g) => g ? `<span class="g-pill g-${g}">${g === "female" ? "�
 const PROJECT_COLORS = ["#0B6FC4", "#4A5DA8", "#7A4FD0", "#C2408A", "#D6603A", "#C99100", "#17996A", "#1590A8"];
 
 const ICONS = {
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
+  restore: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6"/><path d="M4 4v4.6h4.6"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   dots: '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
@@ -241,12 +243,24 @@ async function loadTasks() {
     .select("*, task_assignees(user_id)")
     .order("created_at", { ascending: false });
   if (error) throw error;
-  state.tasks = data.map((t) => ({ ...t, assignees: (t.task_assignees || []).map((a) => a.user_id), mentions: t.mentions || [] }));
+  const all = data.map((t) => ({ ...t, assignees: (t.task_assignees || []).map((a) => a.user_id), mentions: t.mentions || [] }));
+  // archived / deleted tasks (DB v22) live in their own list and stay out of every other view
+  state.archiveReady = data.length ? "archived_at" in data[0] : state.archiveReady ?? false;
+  state.tasks = all.filter((t) => !t.archived_at);
+  state.archived = all.filter((t) => t.archived_at).sort((a, b) => b.archived_at.localeCompare(a.archived_at));
+  await loadDelReqs();
   // tasks.mentions ships with DB migration v20; until then the description doesn't take @mentions
   if (data.length) state.descMentions = "mentions" in data[0];
   else if (state.descMentions == null) state.descMentions = !(await sb.from("tasks").select("mentions").limit(1)).error;
   await loadLinks();
 }
+async function loadDelReqs() {
+  const { data, error } = await sb.from("task_delete_requests").select("*").eq("status", "pending");
+  state.delReqs = error ? [] : data || [];
+  if (!error) state.archiveReady = true;
+}
+const delReqOf = (t) => (state.delReqs || []).find((r) => r.task_id === t.id);
+const findTask = (id) => state.tasks.find((x) => x.id === id) || (state.archived || []).find((x) => x.id === id);
 // people @mentioned in a task description (matched on "@Full Name")
 function mentionIdsIn(text) {
   if (!text || !text.includes("@")) return [];
@@ -425,6 +439,8 @@ addEventListener("focus", () => { if (chans.some((c) => c.state !== "joined")) c
 let coreRepaintPending = false;
 const coreDataSig = () => JSON.stringify([
   state.tasks.map((t) => [t.id, t.updated_at, t.assignees.join(","), (state.links || []).length]),
+  (state.archived || []).map((t) => [t.id, t.updated_at]),
+  (state.delReqs || []).map((r) => r.id),
   state.projects.map((p) => [p.id, p.updated_at || p.name, p.status, p.lead_id, p.position]),
   state.statuses.map((c) => [c.id, c.name, c.color, c.position]),
   state.profiles.map((p) => [p.id, p.updated_at || p.full_name, p.avatar_url]),
@@ -494,7 +510,7 @@ function subscribe() {
     }],
     ["notifs", (ch) => {
       ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async (payload) => {
-        if (["assigned", "completed", "comment", "mention"].includes(payload.new?.type)) coreReload();
+        if (["assigned", "completed", "comment", "mention", "delete_request", "delete_decision"].includes(payload.new?.type)) coreReload();
         await loadNotifs();
         renderBell(true);
         const n = payload.new && state.notifs.find((x) => x.id === payload.new.id);
@@ -503,7 +519,7 @@ function subscribe() {
       ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${me}` }, async () => { await loadNotifs(); renderBell(); });
     }],
     ["core", (ch) => {
-      for (const table of ["tasks", "task_assignees", "task_links", "profiles", "projects", "task_statuses"])
+      for (const table of ["tasks", "task_assignees", "task_links", "profiles", "projects", "task_statuses", "task_delete_requests"])
         ch.on("postgres_changes", { event: "*", schema: "public", table }, reload);
     }],
     ["att", (ch) => {
@@ -852,6 +868,7 @@ function tasksForTab(tab) {
     case "mine":    return state.tasks.filter((t) => t.assignees.includes(me) || (t.mentions || []).includes(me));
     case "created": return state.tasks.filter((t) => t.created_by === me);
     case "team":    return state.tasks.filter((t) => t.assignees.some((u) => team.has(u)));
+    case "archived": return state.archived || [];
     default:        return state.tasks;
   }
 }
@@ -900,7 +917,8 @@ function renderTasks() {
   tabs.push(["all", state.me.is_admin ? tx("كل مهام الموظفين") : "الكل"]);
   // admins land on everyone's tasks; everybody else on their own
   const defTab = state.me.is_admin ? "all" : "mine";
-  if (!tabs.some(([k]) => k === v.tab)) v.tab = defTab;
+  const arch = v.tab === "archived" && state.archiveReady;
+  if (!tabs.some(([k]) => k === v.tab) && !arch) v.tab = defTab;
   if (v.project && !project(v.project)) v.project = "";
 
   let base = tasksForTab(v.tab);
@@ -925,7 +943,7 @@ function renderTasks() {
     list = list.filter((t) => (/^\d+$/.test(qn) && String(t.task_no) === qn) || t.title.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q));
   }
   list = sortTasks(list);
-  const board = getView() === "board";
+  const board = getView() === "board" && !arch;
   const filterUser = v.user && profile(v.user);
   const filterProj = project(v.project);
   const firstName = state.me.full_name.split(" ")[0];
@@ -944,10 +962,11 @@ function renderTasks() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${filterProj && canEditProject(filterProj) ? `<button class="btn ghost" id="edit-cur-proj">${icon("edit")}تعديل المشروع</button>` : ""}
         <div class="tf">
-          <button class="btn tf-btn ${v.status !== "all" || v.user ? "active" : ""}" id="tf-btn" aria-haspopup="dialog" aria-expanded="false">${icon("filter")}<span>${tx("فلتر")}</span><em>${filterUser ? esc(filterUser.full_name.split(" ")[0]) : tabs.find(([k]) => k === v.tab)[1]}${STAT_LABELS[v.status] ? " · " + STAT_LABELS[v.status] : ""}</em></button>
+          <button class="btn tf-btn ${v.status !== "all" || v.user || arch ? "active" : ""} ${arch ? "tf-arch-on" : ""}" id="tf-btn" aria-haspopup="dialog" aria-expanded="false">${icon("filter")}<span>${tx("فلتر")}</span><em>${filterUser ? esc(filterUser.full_name.split(" ")[0]) : arch ? tx("المهام المؤرشفة") : tabs.find(([k]) => k === v.tab)[1]}${STAT_LABELS[v.status] ? " · " + STAT_LABELS[v.status] : ""}</em></button>
           <div class="tf-pop" id="tf-pop" role="dialog" aria-label="${tx("فلتر")}" hidden>
             <h4>${tx("المهام")}</h4>
             <div class="tf-opts">${tabs.map(([k, l]) => `<button class="tf-opt ${v.tab === k ? "on" : ""}" data-ftab="${k}"><span>${l}</span><b>${tasksForTab(k).length}</b></button>`).join("")}</div>
+            ${state.archiveReady ? `<button class="tf-opt tf-arch ${arch ? "on" : ""}" data-ftab="archived">${icon("archive", "sm")}<span>${tx("المهام المؤرشفة")}</span><b>${(state.archived || []).length}</b></button>` : ""}
             <h4>${tx("الحالة")}</h4>
             <div class="tf-stats">
               ${[["open", "مفتوحة", "inbox", "", stats.open], ["overdue", "متأخرة", "flame", "t-bad", stats.overdue], ["week", "خلال 7 أيام", "clock", "t-warn", stats.week], ["done", "مكتملة", "check", "t-ok", stats.done]]
@@ -962,8 +981,9 @@ function renderTasks() {
       </div>
     </div>
     ${filterUser ? `<div><span class="filter-tag">${tx("مهام {name}", { name: esc(filterUser.full_name) })} <button id="clear-user" aria-label="إلغاء الفلتر">×</button></span></div>` : ""}
+    ${arch ? `<div class="arch-banner">${icon("archive")}<div><b>${tx("المهام المؤرشفة")}</b><span>${tx("المهام اللي اتأرشفت أو اتحذفت. تقدر ترجعها تاني أو تحذفها نهائيًا.")}</span></div><button class="btn sm" id="arch-back">${icon("close", "sm")}${tx("رجوع للمهام")}</button></div>` : ""}
     <div class="toolbar ${board ? "tb-board" : ""}">
-      <div class="view-toggle" role="group" aria-label="طريقة العرض">
+      <div class="view-toggle" ${arch ? "hidden" : ""} role="group" aria-label="طريقة العرض">
         <button class="${board ? "" : "on"}" data-view="list" aria-pressed="${!board}" title="قائمة">${icon("rows", "sm")}<span>قائمة</span></button>
         <button class="${board ? "on" : ""}" data-view="board" aria-pressed="${board}" title="كانبان">${icon("board", "sm")}<span>كانبان</span></button>
       </div>
@@ -975,21 +995,21 @@ function renderTasks() {
       <select class="input" id="proj-filter" aria-label="المشروع">${projectOptions(v.project, { includeArchivedId: v.project, emptyLabel: "كل المشاريع" })}</select>
       <div class="input-icon search">${icon("search", "sm")}<input class="input" id="q" type="search" placeholder="${tx("ابحث بالاسم أو رقم المهمة")}" value="${esc(v.q)}"></div>
     </div>
-    ${board ? boardHtml(list) : `<div class="list ${state.animate ? "stagger" : ""}">
+    ${board ? boardHtml(list) : `<div class="list ${arch ? "list-arch" : ""} ${state.animate ? "stagger" : ""}">
       ${list.length ? `<div class="list-head"><span>الحالة</span><span>المهمة</span><span>المسؤولين</span><span>الموعد</span><span>الإنجاز</span><span></span></div>` : ""}
       ${list.map((t, i) => {
         const p = project(t.project_id);
         return `
         <div class="task-row ${t.status === "done" ? "done" : ""}" role="button" tabindex="0" data-id="${t.id}" aria-label="${esc(t.title)}" style="--i:${Math.min(i, 14)};${p ? `--c:${esc(p.color)}` : ""}">
           ${statusPill(t)}
-          <span class="t-title"><b>${tnoHtml(t)}${esc(t.title)}</b>${isMentioned(t) ? `<span class="kb-mention">${icon("at", "sm")}${tx("عملولك منشن")}</span>` : ""}${linkChipsHtml(t)}
+          <span class="t-title"><b>${tnoHtml(t)}${esc(t.title)}</b>${arch ? archBadge(t) : ""}${isMentioned(t) ? `<span class="kb-mention">${icon("at", "sm")}${tx("عملولك منشن")}</span>` : ""}${linkChipsHtml(t)}
             <small>${p ? projChip(p) : ""}<span class="prio prio-${t.priority}">● ${PRIORITY[t.priority]}</span><span ${t.created_by ? `data-pid="${esc(t.created_by)}"` : ""}>${tx("من {name}", { name: esc(profile(t.created_by)?.full_name || "—") })}</span></small></span>
           ${avatarsCell(t.assignees)}
           ${deadlineCell(t)}
           ${progressCell(t)}
-          <span class="row-actions">${canDeleteTask(t) ? `<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="${tx("حذف المهمة {title}", { title: esc(t.title) })}">${icon("trash", "sm")}</button>` : ""}</span>
+          <span class="row-actions">${arch ? archRowActions(t) : canWorkOn(t) ? `${delReqOf(t) ? `<span class="req-dot" title="${tx("فيه طلب حذف مستني موافقة")}">${icon("clock", "sm")}</span>` : ""}${state.archiveReady ? `<button class="row-arch" data-arch="${t.id}" title="${tx("أرشفة")}" aria-label="${tx("أرشفة")}">${icon("archive", "sm")}</button>` : ""}<button class="row-del" data-del="${t.id}" title="حذف المهمة" aria-label="${tx("حذف المهمة {title}", { title: esc(t.title) })}">${icon("trash", "sm")}</button>` : ""}</span>
         </div>`;
-      }).join("") || `<div class="empty"><div class="ill">${icon("tasks")}</div><b>مفيش مهام هنا</b>${v.tab === "mine" && v.status === "all" && !v.project ? "أي مهمة تتسند لك هتظهر في القائمة دي." : "غيّر الفلتر أو أضف مهمة جديدة."}</div>`}
+      }).join("") || `<div class="empty"><div class="ill">${icon("tasks")}</div><b>${arch ? tx("مفيش مهام مؤرشفة") : "مفيش مهام هنا"}</b>${arch ? tx("لما تأرشف أو تحذف مهمة هتلاقيها هنا.") : v.tab === "mine" && v.status === "all" && !v.project ? "أي مهمة تتسند لك هتظهر في القائمة دي." : "غيّر الفلتر أو أضف مهمة جديدة."}</div>`}
     </div>`}`;
 
   $("#new-task").onclick = () => openNewTask();
@@ -1029,7 +1049,7 @@ function renderTasks() {
     state.animate = true; renderTasks(); afterRender();
   });
   $$(".task-row").forEach((r) => {
-    r.onclick = (e) => { if (!e.target.closest("[data-del]")) openTask(r.dataset.id); };
+    r.onclick = (e) => { if (!e.target.closest(".row-actions button")) openTask(r.dataset.id); };
     r.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === r) { e.preventDefault(); openTask(r.dataset.id); } };
   });
   $$("[data-del]").forEach((b) => b.onclick = (e) => {
@@ -1037,6 +1057,14 @@ function renderTasks() {
     const t = state.tasks.find((x) => x.id === b.dataset.del);
     if (t) deleteTask(t, b.closest(".task-row"));
   });
+  $$("[data-arch]").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const t = state.tasks.find((x) => x.id === b.dataset.arch);
+    if (t) archiveTask(t, b.closest(".task-row"));
+  });
+  $$("[data-restore]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); const t = findTask(b.dataset.restore); if (t) restoreTask(t, b.closest(".task-row")); });
+  $$("[data-purge]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); const t = findTask(b.dataset.purge); if (t) purgeTask(t, b.closest(".task-row")); });
+  const ab = $("#arch-back"); if (ab) ab.onclick = () => { v.tab = defTab; state.animate = true; renderTasks(); afterRender(); };
   $("#proj-filter").onchange = (e) => {
     const qs = new URLSearchParams();
     if (v.user) qs.set("user", v.user);
@@ -1372,9 +1400,12 @@ function statusOptions(pid, selected) {
     : Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${selected === k ? "selected" : ""}>${l}</option>`).join("");
 }
 function openTask(id) {
-  const t = state.tasks.find((x) => x.id === id);
+  const t = findTask(id);
   if (!t) return toast("المهمة مش موجودة", true);
-  const manage = canManageTask(t), work = canWorkOn(t);
+  // archived / deleted tasks open read-only; anyone working on a task (assignees too) can edit its details
+  const archived = !!t.archived_at;
+  const manage = !archived && canManageTask(t), work = !archived && canWorkOn(t), edit = work;
+  const req = !archived && delReqOf(t);
   const creator = profile(t.created_by);
   const dropText = tx("اسحب الملفات هنا أو اضغط للاختيار (حتى {mb} ميجا)", { mb: MAX_FILE_MB });
   const ov = openModal(`
@@ -1383,28 +1414,36 @@ function openTask(id) {
       <button class="icon-btn" data-close aria-label="إغلاق" style="color:var(--ink-2)">${icon("close")}</button>
     </div>
     <div id="blocked-banner"></div>
+    ${archived ? `<div class="arch-note ${t.archive_kind === "deleted" ? "del" : ""}">${icon(t.archive_kind === "deleted" ? "trash" : "archive")}
+      <div><b>${t.archive_kind === "deleted" ? tx("المهمة دي محذوفة") : tx("المهمة دي مؤرشفة")}</b><span>${tx("{name} · {when}", { name: esc(profile(t.archived_by)?.full_name || "—"), when: fmtDateTime(t.archived_at) })}</span></div>
+      ${canRestoreTask(t) ? `<button type="button" class="btn sm" id="td-restore">${icon("restore", "sm")}${tx("استرجاع")}</button>` : ""}</div>` : ""}
+    ${req ? `<div class="req-note">${icon("trash")}
+      <div><b>${req.requested_by === state.me.id ? tx("طلبت حذف المهمة دي") : tx("{name} طالب يحذف المهمة دي", { name: esc(profile(req.requested_by)?.full_name || "—") })}</b>
+      <span>${req.reason ? esc(req.reason) + " · " : ""}${canDeleteTask(t) ? tx("وافق أو ارفض") : tx("مستني موافقة {name}", { name: esc(profile(t.created_by)?.full_name || tx("الأدمن")) })}</span></div>
+      <div class="req-acts">${canDeleteTask(t) ? `<button type="button" class="btn sm ghost" id="req-no">${icon("close", "sm")}${tx("رفض")}</button><button type="button" class="btn sm btn-danger" id="req-yes">${icon("check", "sm")}${tx("موافقة")}</button>`
+        : req.requested_by === state.me.id ? `<button type="button" class="btn sm ghost" id="req-cancel">${tx("إلغاء الطلب")}</button>` : ""}</div></div>` : ""}
     <form id="td">
-      <input class="title-input" name="title" value="${esc(t.title)}" ${manage ? "" : "disabled"} aria-label="عنوان المهمة" maxlength="200">
+      <input class="title-input" name="title" value="${esc(t.title)}" ${edit ? "" : "disabled"} aria-label="عنوان المهمة" maxlength="200">
       <div class="meta">${tx("أنشأها {name} · {date}", { name: esc(creator?.full_name || "—"), date: fmtDateTime(t.created_at) })}${t.completed_at ? " · " + tx("اكتملت {date}", { date: fmtDateTime(t.completed_at) }) : ""}</div>
 
       <label class="field"><span>المشروع</span>
-        <select class="input" name="project_id" ${manage ? "" : "disabled"}>${projectOptions(t.project_id, { includeArchivedId: t.project_id })}</select></label>
+        <select class="input" name="project_id" ${edit ? "" : "disabled"}>${projectOptions(t.project_id, { includeArchivedId: t.project_id })}</select></label>
       <div class="row2">
         <label class="field"><span>الحالة</span>
           <select class="input" name="status" ${work ? "" : "disabled"}>${statusOptions(t.project_id, taskCol(t)?.id || t.status)}</select></label>
         <label class="field"><span>الأولوية</span>
-          <select class="input" name="priority" ${manage ? "" : "disabled"}>${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${t.priority === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <select class="input" name="priority" ${edit ? "" : "disabled"}>${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}" ${t.priority === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       </div>
       <div class="row2">
-        <label class="field"><span>${tx("تاريخ البداية")}</span><input class="input" type="date" name="start_date" value="${t.start_date || ""}" ${manage ? "" : "disabled"}></label>
-        <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" value="${t.deadline || ""}" ${manage ? "" : "disabled"}></label>
+        <label class="field"><span>${tx("تاريخ البداية")}</span><input class="input" type="date" name="start_date" value="${t.start_date || ""}" ${edit ? "" : "disabled"}></label>
+        <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" value="${t.deadline || ""}" ${edit ? "" : "disabled"}></label>
       </div>
       <div class="row2">
         <div class="field" style="grid-column:1/-1"><span>نسبة الإنجاز</span>
           <div class="range-row"><input type="range" name="progress" min="0" max="100" step="5" value="${t.progress}" ${work ? "" : "disabled"} aria-label="نسبة الإنجاز"><output id="pv">${t.progress}%</output></div>
           <small class="hint" id="pv-hint" hidden>بتتحسب تلقائيًا من الخطوات</small></div>
       </div>
-      <label class="field mention-host"><span>التفاصيل${manage && state.descMentions ? ` <em class="hint-inline">${tx("اكتب @ عشان تعمل منشن لحد")}</em>` : ""}</span><textarea class="input" name="description" ${manage ? "" : "disabled"}>${esc(t.description || "")}</textarea>
+      <label class="field mention-host"><span>التفاصيل${edit && state.descMentions ? ` <em class="hint-inline">${tx("اكتب @ عشان تعمل منشن لحد")}</em>` : ""}</span><textarea class="input" name="description" ${edit ? "" : "disabled"}>${esc(t.description || "")}</textarea>
         ${(t.mentions || []).length ? `<div class="desc-mentions">${icon("at", "sm")}<span>${tx("اتعمل منشن لـ")}</span>${t.mentions.map(profile).filter(Boolean).map((p) => `<span class="dm-chip ${p.id === state.me.id ? "me" : ""}" data-person="${p.id}">${avatar(p, "sm")}${esc(p.full_name)}</span>`).join("")}</div>` : ""}
       </label>
 
@@ -1451,8 +1490,10 @@ function openTask(id) {
       </div>
       <div id="dtab-activity" hidden><div id="a-list" class="timeline"></div></div>
     </div>
-    ${work || canDeleteTask(t) ? `<div class="drawer-foot">
-      ${canDeleteTask(t) ? `<button type="button" class="btn danger ghost" id="del-task">${icon("trash", "sm")}<span>حذف المهمة</span></button>` : ""}
+    ${work || (archived && canDeleteTask(t)) ? `<div class="drawer-foot">
+      ${archived ? `<button type="button" class="btn danger ghost" id="purge-task">${icon("trash", "sm")}<span>${tx("حذف نهائي")}</span></button>`
+        : `<button type="button" class="btn danger ghost" id="del-task">${icon("trash", "sm")}<span>${canDeleteTask(t) || !state.archiveReady ? "حذف المهمة" : tx("طلب حذف")}</span></button>
+           ${state.archiveReady ? `<button type="button" class="btn ghost" id="arch-task">${icon("archive", "sm")}<span>${tx("أرشفة")}</span></button>` : ""}`}
       <span class="spacer"></span>
       ${work ? `<button class="btn primary" type="submit" form="td">${icon("check", "sm")}<span>حفظ التغييرات</span></button>` : ""}
     </div>` : ""}`, { drawer: true, label: t.title });
@@ -1460,7 +1501,7 @@ function openTask(id) {
   $("[data-close]", ov).onclick = closeModal;
   wirePeopleSearch(ov);
   wireDateRange(ov);
-  if (manage && state.descMentions) wireMentions($("textarea[name=description]", ov), $(".mention-host", ov), descMentionPeople());
+  if (edit && state.descMentions) wireMentions($("textarea[name=description]", ov), $(".mention-host", ov), descMentionPeople());
   const range = $("input[name=progress]", ov), status = $("select[name=status]", ov);
   range.oninput = () => { $("#pv", ov).textContent = range.value + "%"; };
   const kindOf = (v) => colById(v)?.kind || v;
@@ -1514,6 +1555,15 @@ function openTask(id) {
 
   const del = $("#del-task", ov);
   if (del) del.onclick = () => deleteTask(t);
+  const arb = $("#arch-task", ov); if (arb) arb.onclick = () => archiveTask(t);
+  const pur = $("#purge-task", ov); if (pur) pur.onclick = () => purgeTask(t);
+  const rst = $("#td-restore", ov); if (rst) rst.onclick = () => restoreTask(t);
+  if (req) {
+    const y = $("#req-yes", ov), n = $("#req-no", ov), c = $("#req-cancel", ov);
+    if (y) y.onclick = () => decideDelReq(req, true);
+    if (n) n.onclick = () => decideDelReq(req, false);
+    if (c) c.onclick = () => cancelDelReq(req);
+  }
 
   wireDrawerExtras(t, ov, work);
   wireTaskLinks(t, ov, work);
@@ -1529,7 +1579,7 @@ function openTask(id) {
     const sv = String(f.get("status") || "");
     const patch = colById(sv) ? { status_id: sv } : { status: sv };
     if (!range.disabled) patch.progress = Number(f.get("progress"));
-    if (manage) {
+    if (edit) {
       patch.title = String(f.get("title")).trim();
       patch.description = String(f.get("description")).trim() || null;
       if (state.descMentions) patch.mentions = mentionIdsIn(patch.description || "");
@@ -1562,22 +1612,22 @@ function openTask(id) {
 
 /* ---------- Confirm + delete ---------- */
 // Small "edit this text" popup that stacks above the task drawer / modals; resolves with the text or null
-function promptDialog({ title, value = "", label = "", ok = "حفظ", max = 300 }) {
+function promptDialog({ title, value = "", label = "", ok = "حفظ", max = 300, optional = false, ic = "edit", placeholder = "", danger = false }) {
   return new Promise((resolve) => {
     const root = document.createElement("div");
     root.className = "overlay confirm-layer";
     root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true");
     root.innerHTML = `<form class="modal confirm prompt">
-        <div class="confirm-ico">${icon("edit")}</div>
+        <div class="confirm-ico ${danger ? "bad" : ""}">${icon(ic)}</div>
         <h2></h2>
-        <label class="field"><span></span><textarea class="input" rows="3" maxlength="${max}" required></textarea></label>
+        <label class="field"><span></span><textarea class="input" rows="3" maxlength="${max}" ${optional ? "" : "required"}></textarea></label>
         <p class="err"></p>
-        <div class="modal-foot"><button type="button" class="btn ghost" data-no>${tx("إلغاء")}</button><button type="submit" class="btn primary" data-yes>${icon("check", "sm")}<span></span></button></div>
+        <div class="modal-foot"><button type="button" class="btn ghost" data-no>${tx("إلغاء")}</button><button type="submit" class="btn ${danger ? "btn-danger" : "primary"}" data-yes>${icon("check", "sm")}<span></span></button></div>
       </form>`;
     $("h2", root).textContent = title;
     $(".field > span", root).textContent = label;
     $("[data-yes] span", root).textContent = tx(ok);
-    const ta = $("textarea", root); ta.value = value;
+    const ta = $("textarea", root); ta.value = value; if (placeholder) ta.placeholder = placeholder;
     document.body.append(root);
     const done = (v) => {
       document.removeEventListener("keydown", onKey, true);
@@ -1594,7 +1644,7 @@ function promptDialog({ title, value = "", label = "", ok = "حفظ", max = 300 
     $("form", root).onsubmit = (e) => {
       e.preventDefault();
       const v = ta.value.trim();
-      if (!v) { $(".err", root).textContent = tx("اكتب نص الخطوة"); ta.focus(); return; }
+      if (!v && !optional) { $(".err", root).textContent = tx("اكتب نص الخطوة"); ta.focus(); return; }
       done(v);
     };
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 60);
@@ -1630,8 +1680,60 @@ function confirmDialog({ title, body = "", ok = "تأكيد", cancel = "إلغا
   });
 }
 
+// Delete = move to the archive as "deleted". The creator / their managers / admins do it directly;
+// an assignee sends a request to whoever assigned the task (DB v22). Without v22: the old hard delete.
 async function deleteTask(t, rowEl = null) {
-  const ok = await confirmDialog({ title: "حذف المهمة؟", body: tx("«{title}» هتتحذف نهائيًا مع كل ملفاتها.", { title: t.title }), ok: "حذف المهمة" });
+  if (!state.archiveReady) return purgeTask(t, rowEl);
+  if (canDeleteTask(t)) {
+    const ok = await confirmDialog({ title: "حذف المهمة؟", body: tx("«{title}» هتتنقل للمهام المؤرشفة، وتقدر ترجعها من هناك في أي وقت.", { title: t.title }), ok: "حذف المهمة" });
+    if (!ok) return;
+    return runArchive(t, "deleted", null, rowEl);
+  }
+  const pending = delReqOf(t);
+  if (pending) return toast(pending.requested_by === state.me.id ? tx("طلب الحذف بتاعك لسه مستني الموافقة") : tx("فيه طلب حذف للمهمة دي مستني الموافقة"));
+  const boss = profile(t.created_by);
+  const reason = await promptDialog({
+    title: tx("طلب حذف المهمة"), ic: "trash", danger: true, optional: true, max: 500, ok: "ابعت الطلب",
+    label: tx("المهمة دي أسندها لك {name}، فهيوصله إشعار يوافق على الحذف أو يرفض. سبب الحذف (اختياري):", { name: boss?.full_name || tx("الأدمن") }),
+    placeholder: tx("مثلًا: المهمة اتلغت أو مكررة"),
+  });
+  if (reason === null) return;
+  return runArchive(t, "deleted", reason, rowEl);
+}
+async function archiveTask(t, rowEl = null) {
+  const ok = await confirmDialog({ title: tx("أرشفة المهمة؟"), body: tx("«{title}» هتختفي من المهام وتتنقل للمهام المؤرشفة، وتقدر ترجعها في أي وقت.", { title: t.title }), ok: tx("أرشفة"), ic: "archive", danger: false });
+  if (!ok) return;
+  return runArchive(t, "archived", null, rowEl);
+}
+async function runArchive(t, kind, reason, rowEl) {
+  rowEl?.classList.add("removing");
+  const { data, error } = await sb.rpc("archive_task", { p_task: t.id, p_kind: kind, p_reason: reason || null });
+  if (error) { rowEl?.classList.remove("removing"); return toast(friendly(error), true); }
+  if (data === "requested") {
+    rowEl?.classList.remove("removing");
+    await loadTasks(); if (!$("#modal-root .overlay")) { state.animate = false; route(); } else { closeModal(); route(); }
+    return toast(tx("اتبعت طلب الحذف لـ {name}", { name: profile(t.created_by)?.full_name || tx("الأدمن") }));
+  }
+  if (rowEl && !reduceMotion) await new Promise((r) => setTimeout(r, 280));
+  await loadTasks();
+  if ($("#modal-root .overlay")) closeModal();
+  state.animate = false; route();
+  toast(kind === "deleted" ? tx("اتحذفت المهمة واتنقلت للمهام المؤرشفة") : tx("اتأرشفت المهمة"));
+}
+const canRestoreTask = (t) => canDeleteTask(t) || (t.archive_kind === "archived" && canWorkOn(t));
+async function restoreTask(t, rowEl = null) {
+  rowEl?.classList.add("removing");
+  const { error } = await sb.rpc("restore_task", { p_task: t.id });
+  if (error) { rowEl?.classList.remove("removing"); return toast(friendly(error), true); }
+  if (rowEl && !reduceMotion) await new Promise((r) => setTimeout(r, 280));
+  await loadTasks();
+  if ($("#modal-root .overlay")) closeModal();
+  state.animate = false; route();
+  toast(tx("رجعت المهمة للمهام"));
+}
+// gone for good (files included). Only the creator / their managers / admins.
+async function purgeTask(t, rowEl = null) {
+  const ok = await confirmDialog({ title: tx("حذف نهائي؟"), body: tx("«{title}» هتتحذف نهائيًا مع كل ملفاتها وتعليقاتها، ومش هتقدر ترجعها.", { title: t.title }), ok: tx("حذف نهائي") });
   if (!ok) return;
   rowEl?.classList.add("removing");
   try {
@@ -1646,10 +1748,32 @@ async function deleteTask(t, rowEl = null) {
   }
   if (rowEl && !reduceMotion) await new Promise((r) => setTimeout(r, 280));
   state.tasks = state.tasks.filter((x) => x.id !== t.id);
+  state.archived = (state.archived || []).filter((x) => x.id !== t.id);
   if ($("#modal-root .overlay")) closeModal();
   route();
   toast("اتحذفت المهمة");
 }
+async function decideDelReq(r, approve) {
+  if (approve && !(await confirmDialog({ title: tx("توافق على الحذف؟"), body: tx("المهمة هتتنقل للمهام المؤرشفة كمحذوفة، وتقدر ترجعها بعدين."), ok: tx("موافق، احذفها") }))) return;
+  const { error } = await sb.rpc("decide_delete_request", { p_req: r.id, p_approve: approve });
+  if (error) return toast(friendly(error), true);
+  await loadTasks();
+  if ($("#modal-root .overlay")) closeModal();
+  state.animate = false; route();
+  toast(approve ? tx("اتحذفت المهمة واتنقلت للمهام المؤرشفة") : tx("اترفض طلب الحذف"));
+}
+async function cancelDelReq(r) {
+  const { error } = await sb.rpc("cancel_delete_request", { p_req: r.id });
+  if (error) return toast(friendly(error), true);
+  await loadTasks();
+  if ($("#modal-root .overlay")) closeModal();
+  state.animate = false; route();
+  toast(tx("اتلغى طلب الحذف"));
+}
+const archBadge = (t) => `<span class="arch-badge ${t.archive_kind === "deleted" ? "del" : ""}">${icon(t.archive_kind === "deleted" ? "trash" : "archive", "sm")}${t.archive_kind === "deleted" ? tx("محذوفة") : tx("مؤرشفة")}<em>${tx("{name} · {when}", { name: esc(profile(t.archived_by)?.full_name || "—"), when: timeAgo(t.archived_at) })}</em></span>`;
+const archRowActions = (t) =>
+  `${canRestoreTask(t) ? `<button class="row-restore" data-restore="${t.id}" title="${tx("استرجاع")}" aria-label="${tx("استرجاع")}">${icon("restore", "sm")}<span>${tx("استرجاع")}</span></button>` : ""}` +
+  `${canDeleteTask(t) ? `<button class="row-del" data-purge="${t.id}" title="${tx("حذف نهائي")}" aria-label="${tx("حذف نهائي")}">${icon("trash", "sm")}</button>` : ""}`;
 
 /* =====================================================================
    Projects
@@ -1918,6 +2042,8 @@ function notifText(n) {
     case "completed": return tx("{actor} خلّص مهمة {title}", { actor, title });
     case "due_soon": return tx("موعد تسليم {title} بكرة", { title });
     case "mention": return tx("{actor} عمل لك منشن في {title}", { actor, title });
+    case "delete_request": return tx("{actor} طالب يحذف {title} — وافق أو ارفض", { actor, title }) + (n.data?.reason ? ` — ${esc(n.data.reason)}` : "");
+    case "delete_decision": return n.data?.approved ? tx("{actor} وافق على حذف {title}", { actor, title }) : tx("{actor} رفض حذف {title}", { actor, title });
     case "absent": return tx("اتسجلت غايب عن استاند أب {day} ({pts} نقاط)", { day: `<b>${esc(n.data?.day ? fmtDayShort(n.data.day) : "")}</b>`, pts: PTS.absent });
     case "thanks": return tx("{actor} اداك {pts} نقطة شكر", { actor, pts: `<b>+${esc(n.data?.points ?? "")}</b>` }) + (n.data?.reason ? ` — ${esc(n.data.reason)}` : "");
     default: return title;
@@ -1971,7 +2097,7 @@ function toggleNotifPanel(refresh = false) {
       sb.from("notifications").update({ read_at: n.read_at }).eq("id", n.id).then(() => {});
     }
     if (n && (n.type === "absent" || n.type === "thanks")) { state.att.tab = "me"; location.hash = "#/attendance"; if (currentRoute().page === "attendance") route(); }
-    else if (n?.task_id && state.tasks.some((t) => t.id === n.task_id)) openTask(n.task_id);
+    else if (n?.task_id && findTask(n.task_id)) openTask(n.task_id);
     else toast("المهمة دي مبقتش موجودة", true);
   });
 }
@@ -1997,6 +2123,7 @@ const ACT_ICON = {
   created: "plus", status: "tasks", progress: "team", deadline: "calendar", title: "edit", priority: "flame",
   project: "projects", assigned: "users", unassigned: "users", file_added: "clip", file_removed: "clip",
   subtask_added: "checklist", subtask_done: "check", subtask_undone: "checklist",
+  archived: "archive", deleted: "trash", restored: "restore", delete_requested: "trash", delete_rejected: "close",
 };
 function activityText(a) {
   const actor = `<b>${esc(profile(a.actor_id)?.full_name || tx("النظام"))}</b>`;
@@ -2019,6 +2146,11 @@ function activityText(a) {
     case "subtask_added": return tx("{a} أضاف خطوة {s}", { a: actor, s: q(d.title) });
     case "subtask_done": return tx("{a} خلّص خطوة {s}", { a: actor, s: q(d.title) });
     case "subtask_undone": return tx("{a} رجّع خطوة {s} لغير مكتملة", { a: actor, s: q(d.title) });
+    case "archived": return tx("{a} أرشف المهمة", { a: actor });
+    case "deleted": return tx("{a} حذف المهمة (اتنقلت للأرشيف)", { a: actor });
+    case "restored": return tx("{a} رجّع المهمة من الأرشيف", { a: actor });
+    case "delete_requested": return tx("{a} طلب حذف المهمة", { a: actor }) + (d.reason ? ` — ${q(d.reason)}` : "");
+    case "delete_rejected": return tx("{a} رفض طلب الحذف", { a: actor });
     default: return esc(a.action);
   }
 }

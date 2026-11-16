@@ -2141,3 +2141,57 @@ html[dir="rtl"] :is(.t-title b, .title-input, .proj-top h3, .proj-top p, .person
   [dir="auto"], [contenteditable]) { text-align: right; }
 html[dir="rtl"] :is(textarea, input)::placeholder { text-align: right; }
 html[dir="rtl"] :is(input[type=email], input[type=url], input[type=password], input[type=tel]) { text-align: right; }
+
+/* ---------- Archive + delete requests (v22) ---------- */
+@media (min-width: 821px) {
+  .list .list-head, .list .task-row { grid-template-columns: 116px minmax(0, 1fr) 110px 120px 150px 72px; }
+  .list.list-arch .list-head, .list.list-arch .task-row { grid-template-columns: 116px minmax(0, 1fr) 110px 120px 150px 150px; }
+}
+.row-actions { gap: 2px; align-items: center; }
+.row-arch, .row-restore {
+  height: 32px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px;
+  border-radius: 9px; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+  transition: opacity .2s, background .2s, color .2s, transform .15s;
+}
+.row-arch { opacity: 0; padding: 0; width: 32px; }
+.task-row:hover .row-arch, .task-row:focus-within .row-arch, .row-arch:focus-visible { opacity: 1; }
+@media (hover: none) { .row-arch { opacity: 1; } }
+.row-arch:hover { background: var(--line-2); color: var(--brand); }
+.row-restore { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.row-restore:hover { background: color-mix(in srgb, var(--brand) 18%, transparent); }
+.row-arch:active, .row-restore:active { transform: scale(.94); }
+.list-arch .row-del { opacity: 1; }
+.req-dot { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 99px; color: #B45309; background: color-mix(in srgb, #F59E0B 16%, transparent); }
+
+.tf-arch { width: 100%; margin-top: 6px; border-top: 1px dashed var(--line); border-radius: 0 0 10px 10px; padding-top: 11px; justify-content: flex-start; color: var(--ink-2); }
+.tf-arch span { flex: 1; }
+.tf-arch svg { flex: none; }
+.tf-arch.on { border-radius: 10px; border-top-color: transparent; color: #fff; }
+.tf-btn.tf-arch-on em { color: var(--brand); }
+
+.arch-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 14px 16px; border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 9%, var(--card)), var(--card)); border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--line)); }
+.arch-banner > svg { flex: none; width: 38px; height: 38px; padding: 9px; border-radius: 12px; color: #fff; background: var(--brand-grad); }
+.arch-banner > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.arch-banner b { font-size: 15px; }
+.arch-banner span { font-size: 13px; color: var(--ink-2); }
+@media (max-width: 560px) { .arch-banner { flex-wrap: wrap; } .arch-banner .btn { width: 100%; justify-content: center; } }
+
+.arch-badge { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: 8px; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; vertical-align: middle;
+  color: var(--ink-2); background: var(--line-2); }
+.arch-badge.del { color: var(--danger); background: var(--s-blk-bg); }
+.arch-badge em { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.arch-badge em::before { content: "·"; margin-inline-end: 5px; }
+
+.arch-note, .req-note { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 11px 12px; border-radius: 12px; font-size: 13px; line-height: 1.55;
+  background: var(--line-2); border: 1px solid var(--line); }
+.arch-note > svg, .req-note > svg { flex: none; }
+.arch-note > div:first-of-type, .req-note > div:first-of-type { flex: 1; min-width: 0; display: grid; }
+.arch-note span, .req-note span { color: var(--ink-2); overflow-wrap: anywhere; }
+.arch-note.del { background: color-mix(in srgb, #D13B47 8%, var(--card)); border-color: color-mix(in srgb, #D13B47 25%, transparent); }
+.arch-note.del > svg { color: var(--danger); }
+.req-note { background: color-mix(in srgb, #F59E0B 10%, var(--card)); border-color: color-mix(in srgb, #F59E0B 35%, transparent); }
+.req-note > svg { color: #B45309; }
+.req-acts { display: flex; gap: 6px; flex: none; }
+@media (max-width: 560px) { .req-note { flex-wrap: wrap; } .req-acts { width: 100%; } .req-acts .btn { flex: 1; justify-content: center; } }
+.t-title .arch-badge { align-self: flex-start; width: fit-content; max-width: 100%; margin-inline-start: 0; margin-top: 2px; }
