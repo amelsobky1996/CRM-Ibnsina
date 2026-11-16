@@ -2124,3 +2124,11 @@ html[dir="ltr"] .t-title b { text-align: left; }
 #nt-steps .sub { padding: 4px 6px; }
 #nt-steps .sub-del { opacity: 1; }
 @media (min-width: 961px) { .main:has(> .chat) { padding-bottom: 16px; } }
+/* step edit button always visible (not only on hover) + edit popup */
+.sub-edit { opacity: .75; }
+.sub:hover .sub-edit { opacity: 1; }
+.ns-title { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal.prompt { text-align: start; max-width: 460px; }
+.modal.prompt h2 { text-align: center; }
+.modal.prompt .field { margin: 14px 0 4px; }
+.modal.prompt textarea { min-height: 84px; }

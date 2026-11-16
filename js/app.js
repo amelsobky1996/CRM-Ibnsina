@@ -1151,10 +1151,15 @@ function openNewTask(status = "todo", colId = null) {
       <div class="sub" data-id="${i}">
         ${pendingSteps.length > 1 ? `<span class="ns-grip sub-grip" aria-hidden="true">${icon("grip", "sm")}</span>` : ""}
         <span class="ns-no">${i + 1}</span>
-        <input class="input sub-input ns-title" value="${esc(x)}" maxlength="300" aria-label="${tx("تعديل الخطوة")}">
+        <span class="ns-title">${esc(x)}</span>
+        <button type="button" class="sub-edit" data-nsedit="${i}" aria-label="${tx("تعديل الخطوة")}" title="${tx("تعديل الخطوة")}">${icon("edit", "sm")}</button>
         <button type="button" class="sub-del" data-nsdel="${i}" aria-label="حذف الخطوة">${icon("close", "sm")}</button>
       </div>`).join("");
-    $$(".ns-title", nsBox).forEach((inp, i) => { inp.oninput = () => { pendingSteps[i] = inp.value; }; inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); nsIn.focus(); } }; });
+    $$("[data-nsedit]", nsBox).forEach((b) => b.onclick = async () => {
+      const i = +b.dataset.nsedit;
+      const v = await promptDialog({ title: tx("تعديل الخطوة"), label: tx("نص الخطوة"), value: pendingSteps[i] });
+      if (v != null) { pendingSteps[i] = v; drawSteps(); }
+    });
     $$("[data-nsdel]", nsBox).forEach((b) => b.onclick = () => { pendingSteps.splice(+b.dataset.nsdel, 1); drawSteps(); });
   };
   wireDragList(nsBox, ".sub", (order) => { const copy = order.map((i) => pendingSteps[+i]); pendingSteps.splice(0, pendingSteps.length, ...copy); drawSteps(); });
@@ -1530,6 +1535,45 @@ function openTask(id) {
 }
 
 /* ---------- Confirm + delete ---------- */
+// Small "edit this text" popup that stacks above the task drawer / modals; resolves with the text or null
+function promptDialog({ title, value = "", label = "", ok = "حفظ", max = 300 }) {
+  return new Promise((resolve) => {
+    const root = document.createElement("div");
+    root.className = "overlay confirm-layer";
+    root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true");
+    root.innerHTML = `<form class="modal confirm prompt">
+        <div class="confirm-ico">${icon("edit")}</div>
+        <h2></h2>
+        <label class="field"><span></span><textarea class="input" rows="3" maxlength="${max}" required></textarea></label>
+        <p class="err"></p>
+        <div class="modal-foot"><button type="button" class="btn ghost" data-no>${tx("إلغاء")}</button><button type="submit" class="btn primary" data-yes>${icon("check", "sm")}<span></span></button></div>
+      </form>`;
+    $("h2", root).textContent = title;
+    $(".field > span", root).textContent = label;
+    $("[data-yes] span", root).textContent = tx(ok);
+    const ta = $("textarea", root); ta.value = value;
+    document.body.append(root);
+    const done = (v) => {
+      document.removeEventListener("keydown", onKey, true);
+      root.classList.add("closing");
+      setTimeout(() => root.remove(), reduceMotion ? 0 : 180);
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); done(null); } };
+    document.addEventListener("keydown", onKey, true);
+    root.addEventListener("mousedown", (e) => { if (e.target === root) done(null); });
+    $("[data-no]", root).onclick = () => done(null);
+    // Enter saves, Shift+Enter makes a new line
+    ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form", root).requestSubmit(); } });
+    $("form", root).onsubmit = (e) => {
+      e.preventDefault();
+      const v = ta.value.trim();
+      if (!v) { $(".err", root).textContent = tx("اكتب نص الخطوة"); ta.focus(); return; }
+      done(v);
+    };
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 60);
+  });
+}
 function confirmDialog({ title, body = "", ok = "تأكيد", cancel = "إلغاء", danger = true, ic = null }) {
   return new Promise((resolve) => {
     const root = document.createElement("div");
@@ -2001,26 +2045,15 @@ function wireDrawerExtras(t, ov, work) {
       subs = subs.filter((x) => x.id !== id); drawerDirty = true; renderSubs(); refreshProgress();
     });
   };
-  // rename a step in place: Enter / leaving the field saves, Esc cancels
-  const editSub = (row, it) => {
-    if (!row || !it || row.classList.contains("editing")) return;
-    row.classList.add("editing");
-    const label = $("label", row);
-    const inp = document.createElement("input");
-    inp.className = "input sub-input"; inp.value = it.title; inp.maxLength = 300; inp.setAttribute("aria-label", tx("تعديل الخطوة"));
-    label.after(inp); label.hidden = true; inp.focus(); inp.select();
-    let done = false;
-    const finish = async (save) => {
-      if (done) return; done = true;
-      const v = inp.value.trim();
-      if (!save || !v || v === it.title) return renderSubs();
-      const old = it.title; it.title = v; renderSubs();
-      const { error } = await sb.from("task_subtasks").update({ title: v }).eq("id", it.id);
-      if (error) { it.title = old; renderSubs(); return toast(friendly(error), true); }
-      drawerDirty = true;
-    };
-    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } };
-    inp.onblur = () => finish(true);
+  // rename a step in a small popup
+  const editSub = async (row, it) => {
+    if (!it) return;
+    const v = await promptDialog({ title: tx("تعديل الخطوة"), label: tx("نص الخطوة"), value: it.title });
+    if (v == null || v === it.title || !ov.isConnected) return;
+    const old = it.title; it.title = v; renderSubs();
+    const { error } = await sb.from("task_subtasks").update({ title: v }).eq("id", it.id);
+    if (error) { it.title = old; renderSubs(); return toast(friendly(error), true); }
+    drawerDirty = true; toast(tx("اتعدلت الخطوة"));
   };
   // reorder by dragging the grip; positions are saved as 0..n-1
   if (work) wireDragList(subList, ".sub", async (ids) => {
