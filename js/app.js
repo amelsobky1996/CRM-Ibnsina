@@ -605,7 +605,7 @@ function renderShell() {
       <nav class="tabbar" id="tabbar" aria-label="القائمة الرئيسية"></nav>
     </div>`;
   window.onhashchange = () => { state.animate = true; route(); };
-  window.onresize = () => { placeTabPill(document); sizeBoard(); fitNav(); };
+  window.onresize = () => { placeTabPill(document); sizeBoard(); sizeChat(); fitNav(); };
   state.animate = true;
   route();
 }
@@ -1126,6 +1126,10 @@ function openNewTask(status = "todo", colId = null) {
         <label class="field"><span>${tx("تاريخ النهاية")}</span><input class="input" type="date" name="deadline" min="${cairoToday()}"></label>
       </div>
       <div class="field"><span>إسناد إلى</span>${peoplePicker([state.me.id])}</div>
+      <div class="field" id="nt-steps"><span>${tx("الخطوات (اختياري)")}</span>
+        <div class="subtasks ns-list"></div>
+        <div class="sub-add"><input class="input" id="ns-new" placeholder="أضف خطوة واضغط Enter" maxlength="300" aria-label="خطوة جديدة"><button type="button" class="btn sm" id="ns-add">${icon("plus", "sm")}إضافة</button></div>
+      </div>
       ${state.linksReady && state.tasks.length ? `<div class="field" id="nt-links"><span>${tx("ربط بمهمة تانية (اختياري)")}</span><div class="link-list"></div>${linkAddHtml()}</div>` : ""}
       <label class="dropzone">${icon("clip", "sm")}<span id="nt-files">${tx("إرفاق ملفات (اختياري، حتى {mb} ميجا للملف)", { mb: MAX_FILE_MB })}</span><input type="file" multiple name="files"></label>
       <div id="nt-progress"></div>
@@ -1139,6 +1143,24 @@ function openNewTask(status = "todo", colId = null) {
   $("[data-close]", ov).onclick = closeModal;
   wireDateRange(ov);
   if (state.descMentions) wireMentions($("textarea[name=description]", ov), $(".mention-host", ov), descMentionPeople());
+  // steps written before the task exists: add, rename, drag to reorder; saved right after it's created
+  const pendingSteps = [];
+  const nsBox = $(".ns-list", ov), nsIn = $("#ns-new", ov);
+  const drawSteps = () => {
+    nsBox.innerHTML = pendingSteps.map((x, i) => `
+      <div class="sub" data-id="${i}">
+        ${pendingSteps.length > 1 ? `<span class="ns-grip sub-grip" aria-hidden="true">${icon("grip", "sm")}</span>` : ""}
+        <span class="ns-no">${i + 1}</span>
+        <input class="input sub-input ns-title" value="${esc(x)}" maxlength="300" aria-label="${tx("تعديل الخطوة")}">
+        <button type="button" class="sub-del" data-nsdel="${i}" aria-label="حذف الخطوة">${icon("close", "sm")}</button>
+      </div>`).join("");
+    $$(".ns-title", nsBox).forEach((inp, i) => { inp.oninput = () => { pendingSteps[i] = inp.value; }; inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); nsIn.focus(); } }; });
+    $$("[data-nsdel]", nsBox).forEach((b) => b.onclick = () => { pendingSteps.splice(+b.dataset.nsdel, 1); drawSteps(); });
+  };
+  wireDragList(nsBox, ".sub", (order) => { const copy = order.map((i) => pendingSteps[+i]); pendingSteps.splice(0, pendingSteps.length, ...copy); drawSteps(); });
+  const addStep = () => { const v = nsIn.value.trim(); if (!v) return; pendingSteps.push(v); nsIn.value = ""; drawSteps(); nsIn.focus(); };
+  nsIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); addStep(); } };
+  $("#ns-add", ov).onclick = addStep;
   // links picked before the task exists; saved right after it's created
   const pendingLinks = [];
   const ntl = $("#nt-links", ov);
@@ -1180,6 +1202,11 @@ function openNewTask(status = "todo", colId = null) {
       if (error) throw error;
       const { error: e2 } = await sb.from("task_assignees").insert(assignees.map((u) => ({ task_id: task.id, user_id: u })));
       if (e2) throw e2;
+      const steps = pendingSteps.map((x) => x.trim()).filter(Boolean);
+      if (steps.length) {
+        const { error: e4 } = await sb.from("task_subtasks").insert(steps.map((title, i) => ({ task_id: task.id, title, position: i })));
+        if (e4) toast(friendly(e4), true);
+      }
       if (pendingLinks.length) {
         const { error: e3 } = await sb.from("task_links").insert(pendingLinks.map((x) => ({ task_id: task.id, other_id: x.otherId, kind: x.kind })));
         if (e3) toast(friendly(e3), true);
@@ -1625,6 +1652,34 @@ function renderProjects() {
   $$("[data-edit-proj]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); openProjectModal(project(b.dataset.editProj)); });
 }
 
+// Drag rows by their grip to reorder them; onDrop gets the new order of row ids (data-sub / data-id)
+function wireDragList(box, rowSel, onDrop) {
+  box.addEventListener("pointerdown", (e) => {
+    const grip = e.target.closest(".sub-grip, .ns-grip"); if (!grip || !box.contains(grip)) return;
+    const row = grip.closest(rowSel); if (!row) return;
+    e.preventDefault();
+    row.classList.add("dragging"); row.setPointerCapture(e.pointerId);
+    let lastY = e.clientY;
+    const onMove = (ev) => {
+      const dy = ev.clientY - lastY; row.style.transform = `translateY(${dy}px)`;
+      const sib = dy < 0 ? row.previousElementSibling : row.nextElementSibling;
+      if (!sib || !sib.matches(rowSel)) return;
+      const sr = sib.getBoundingClientRect(), rr = row.getBoundingClientRect();
+      if ((dy < 0 && rr.top < sr.top + sr.height / 2) || (dy > 0 && rr.bottom > sr.top + sr.height / 2)) {
+        dy < 0 ? sib.before(row) : sib.after(row);
+        lastY = ev.clientY; row.style.transform = "";
+      }
+    };
+    const onUp = () => {
+      row.removeEventListener("pointermove", onMove); row.classList.remove("dragging"); row.style.transform = "";
+      onDrop($$(rowSel, box).map((r) => r.dataset.sub || r.dataset.id));
+    };
+    row.addEventListener("pointermove", onMove);
+    row.addEventListener("pointerup", onUp, { once: true });
+    row.addEventListener("pointercancel", onUp, { once: true });
+  });
+}
+
 // Admin: drag (or use the arrows) to set the project order; it's used on every page
 function openProjectOrder() {
   let list = [...state.projects];
@@ -1924,8 +1979,10 @@ function wireDrawerExtras(t, ov, work) {
     $("#pv-hint", ov).hidden = !auto;
     subList.innerHTML = subs.length ? subs.map((x) => `
       <div class="sub ${x.done ? "done" : ""}" data-sub="${x.id}">
+        ${work && subs.length > 1 ? `<span class="sub-grip" title="${tx("اسحب عشان تغيّر الترتيب")}" aria-hidden="true">${icon("grip", "sm")}</span>` : ""}
         <label><input type="checkbox" ${x.done ? "checked" : ""} ${work ? "" : "disabled"}><span class="box">${icon("check", "sm")}</span><span class="txt">${esc(x.title)}</span></label>
-        ${work ? `<button type="button" class="sub-del" data-sdel="${x.id}" aria-label="حذف الخطوة">${icon("close", "sm")}</button>` : ""}
+        ${work ? `<button type="button" class="sub-edit" data-sedit="${x.id}" aria-label="${tx("تعديل الخطوة")}" title="${tx("تعديل الخطوة")}">${icon("edit", "sm")}</button>
+        <button type="button" class="sub-del" data-sdel="${x.id}" aria-label="حذف الخطوة">${icon("close", "sm")}</button>` : ""}
       </div>`).join("")
       : `<p class="meta" style="margin:0">مفيش خطوات لسه. قسّم المهمة لخطوات صغيرة ونسبة الإنجاز هتتحسب لوحدها.</p>`;
     $$("input[type=checkbox]", subList).forEach((cb) => cb.onchange = async () => {
@@ -1935,6 +1992,7 @@ function wireDrawerExtras(t, ov, work) {
       if (error) { it.done = !it.done; renderSubs(); return toast(friendly(error), true); }
       refreshProgress();
     });
+    $$("[data-sedit]", subList).forEach((b) => b.onclick = () => editSub(b.closest(".sub"), subs.find((x) => x.id === b.dataset.sedit)));
     $$("[data-sdel]", subList).forEach((b) => b.onclick = async () => {
       const id = b.dataset.sdel, row = b.closest(".sub");
       row.classList.add("removing");
@@ -1943,6 +2001,40 @@ function wireDrawerExtras(t, ov, work) {
       subs = subs.filter((x) => x.id !== id); drawerDirty = true; renderSubs(); refreshProgress();
     });
   };
+  // rename a step in place: Enter / leaving the field saves, Esc cancels
+  const editSub = (row, it) => {
+    if (!row || !it || row.classList.contains("editing")) return;
+    row.classList.add("editing");
+    const label = $("label", row);
+    const inp = document.createElement("input");
+    inp.className = "input sub-input"; inp.value = it.title; inp.maxLength = 300; inp.setAttribute("aria-label", tx("تعديل الخطوة"));
+    label.after(inp); label.hidden = true; inp.focus(); inp.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (!save || !v || v === it.title) return renderSubs();
+      const old = it.title; it.title = v; renderSubs();
+      const { error } = await sb.from("task_subtasks").update({ title: v }).eq("id", it.id);
+      if (error) { it.title = old; renderSubs(); return toast(friendly(error), true); }
+      drawerDirty = true;
+    };
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } };
+    inp.onblur = () => finish(true);
+  };
+  // reorder by dragging the grip; positions are saved as 0..n-1
+  if (work) wireDragList(subList, ".sub", async (ids) => {
+    const before = subs.map((x) => x.id).join();
+    subs = ids.map((id) => subs.find((x) => x.id === id)).filter(Boolean);
+    if (subs.map((x) => x.id).join() === before) return;
+    renderSubs();
+    const changed = subs.map((x, i) => ({ x, i })).filter(({ x, i }) => x.position !== i);
+    const res = await Promise.all(changed.map(({ x, i }) => sb.from("task_subtasks").update({ position: i }).eq("id", x.id)));
+    const err = res.find((r) => r.error)?.error;
+    if (err) { toast(friendly(err), true); return loadSubs(); }
+    changed.forEach(({ x, i }) => { x.position = i; });
+    drawerDirty = true;
+  });
   const loadSubs = async () => {
     const { data } = await sb.from("task_subtasks").select("*").eq("task_id", t.id).order("position").order("created_at");
     subs = data || []; renderSubs();
@@ -1952,7 +2044,8 @@ function wireDrawerExtras(t, ov, work) {
     const title = addInput.value.trim();
     if (!title) return;
     addInput.value = ""; addInput.focus();
-    const { data, error } = await sb.from("task_subtasks").insert({ task_id: t.id, title, position: subs.length }).select().single();
+    const pos = subs.reduce((m, x) => Math.max(m, (x.position ?? 0) + 1), subs.length);
+    const { data, error } = await sb.from("task_subtasks").insert({ task_id: t.id, title, position: pos }).select().single();
     if (error) return toast(friendly(error), true);
     if (!subs.some((x) => x.id === data.id)) subs.push(data);
     drawerDirty = true; renderSubs(); refreshProgress();
@@ -2281,6 +2374,16 @@ function openColDelete(c) {
     closeModal(); toast(tx("اتمسح العمود"));
     state.animate = false; renderTasks(); afterRender();
   };
+}
+function sizeChat() {
+  const c = $(".chat"); if (!c) return;
+  if (matchMedia("(max-width: 960px)").matches) { c.style.height = ""; return; }
+  const top = c.getBoundingClientRect().top + window.scrollY;
+  let h = Math.max(420, Math.floor(innerHeight - top - 16));
+  c.style.height = h + "px";
+  // whatever still spills (page padding, footer) comes off the chat too, so the page never scrolls
+  const over = document.documentElement.scrollHeight - innerHeight;
+  if (over > 0 && h - over >= 420) c.style.height = (h - over) + "px";
 }
 function sizeBoard() {
   const b = $("#board"); if (!b) return;
@@ -2892,6 +2995,7 @@ function renderChat() {
       <section class="chat-thread-pane" id="chat-pane">${open ? "" : `<div class="chat-empty"><div class="ill">${icon("chat")}</div><b>اختار حد تكلمه</b><span>الرسايل نصية بس، ومحدش يقدر يشوفها غيركم انتم الاتنين.</span></div>`}</section>
     </div>`;
   fillConvs(withId, groupId);
+  sizeChat(); requestAnimationFrame(sizeChat);
   $("#chat-q").oninput = (e) => { state.chatQ = e.target.value; fillConvs(withId, groupId); };
   $("#new-group").onclick = () => openGroupModal();
   if (partner) renderThread(partner);

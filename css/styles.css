@@ -2102,3 +2102,25 @@ html[dir="rtl"] .dm-chip { padding: 2px 3px 2px 10px; }
 .po-row .po-down svg { transform: rotate(-90deg); }
 .po-row .icon-btn:disabled { opacity: .3; }
 .tf-pop select.input { width: 100%; }
+
+/* task names line up with the start of the row in Arabic, even when written in English */
+html[dir="rtl"] .t-title b { text-align: right; }
+html[dir="ltr"] .t-title b { text-align: left; }
+
+/* steps: drag grip, edit button, inline rename */
+.sub-grip { display: grid; place-items: center; width: 22px; height: 28px; flex: none; color: var(--ink-3); cursor: grab; touch-action: none; border-radius: 7px; opacity: .55; transition: opacity .15s, background .15s; }
+.sub:hover .sub-grip, .sub.dragging .sub-grip { opacity: 1; }
+.sub-grip:hover { background: var(--line-2); color: var(--ink); }
+.sub.dragging { position: relative; z-index: 2; background: var(--card); box-shadow: 0 12px 26px -12px rgba(8, 30, 70, .45); animation: none; }
+.sub.dragging .sub-grip { cursor: grabbing; }
+.sub-edit { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--ink-3); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+.sub:hover .sub-edit, .sub-edit:focus-visible { opacity: 1; }
+.sub-edit:hover { background: var(--line-2); color: var(--brand); }
+@media (hover: none) { .sub-edit, .sub-grip { opacity: 1; } }
+.sub-input { flex: 1; min-width: 0; height: 34px; padding: 4px 10px; font-size: 14px; }
+.sub.editing { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+.ns-list:not(:empty) { margin-bottom: 8px; }
+.ns-no { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 7px; font: 700 11.5px/1 "IBM Plex Sans", ui-monospace, monospace; color: #fff; background: var(--brand-grad); }
+#nt-steps .sub { padding: 4px 6px; }
+#nt-steps .sub-del { opacity: 1; }
+@media (min-width: 961px) { .main:has(> .chat) { padding-bottom: 16px; } }
