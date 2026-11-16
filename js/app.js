@@ -800,6 +800,7 @@ function openMiniChat(key) {
   const h = chatHeads.find((x) => x.key === key); if (h) h.count = 0;
   box.classList.remove("closing"); void box.offsetWidth; box.classList.add("open");
   if (p) renderThread(p); else renderGroupThread(g);
+  if (g && groupLeft(g)) { const n = $(".g-left-note #g-forget", box); n?.remove(); }
   const head = $(".thread-head", box);
   head.insertAdjacentHTML("beforeend", `
     <a class="icon-btn mini-full" href="${g ? `#/chat?group=${id}` : `#/chat?with=${id}`}" title="${tx("فتح في المحادثات")}" aria-label="${tx("فتح في المحادثات")}">${icon("expand", "sm")}</a>
@@ -3437,7 +3438,7 @@ const chatImgUrls = new Map(); // storage path -> { url, exp }
 const hasAtt = (m) => !!(m.attachment_path || m._local);
 const isVoice = (m) => (m.attachment_meta || m._meta)?.kind === "audio";
 const hasImg = (m) => hasAtt(m) && !isVoice(m);
-const msgPreviewText = (m) => (m.body || "").trim() ? m.body.replace(/\s+/g, " ") : isVoice(m) ? "🎤 " + tx("رسالة صوتية") : hasImg(m) ? "📷 " + tx("صورة") : "";
+const msgPreviewText = (m) => m.kind === "system" ? sysText(m) : (m.body || "").trim() ? m.body.replace(/\s+/g, " ") : isVoice(m) ? "🎤 " + tx("رسالة صوتية") : hasImg(m) ? "📷 " + tx("صورة") : "";
 // makes any picture fit the 1.5 MB limit (keeps small JPG/PNG/WebP/GIF as they are)
 async function prepChatImage(file) {
   if (!file || !/^image\//.test(file.type)) throw new Error(tx("ابعت صورة بس (JPG أو PNG)"));
@@ -3690,7 +3691,7 @@ function wireVoicePlayers(box) {
 }
 
 /* ---------- edit a message while it's still unread (DB v25) ---------- */
-const groupMsgUnread = (m) => { const g = groupById(m.group_id); return !!g && !g.members.some((x) => x.user_id !== m.sender_id && x.last_read_at && x.last_read_at >= m.created_at); };
+const groupMsgUnread = (m) => { const g = groupById(m.group_id); return !!g && !(g.allMembers || g.members).some((x) => x.user_id !== m.sender_id && x.last_read_at && x.last_read_at >= m.created_at); };
 async function editChatMessage(m, group = false) {
   const v = await promptDialog({ title: tx("تعديل الرسالة"), value: m.body || "", label: tx("التعديل متاح لحد ما الرسالة تتقري"), ok: "حفظ", max: MSG_MAX, optional: hasAtt(m) });
   if (v === null || v.trim() === (m.body || "").trim()) return;
@@ -3797,7 +3798,7 @@ function fillConvs(activeId, activeGroup = currentRoute().params.get("group")) {
   const grow = ({ g, last }) => {
     const n = groupUnread(g.id);
     const who = last ? (last.sender_id === state.me.id ? tx("انت") : (profile(last.sender_id)?.full_name.split(" ")[0] || "")) : "";
-    const preview = last ? `${who}: ${last.deleted_at ? tx("اتمسحت الرسالة دي") : msgPreviewText(last)}` : tx("{n} أعضاء", { n: g.members.length });
+    const preview = !last ? tx("{n} أعضاء", { n: g.members.length }) : last.kind === "system" ? sysText(last) : `${who}: ${last.deleted_at ? tx("اتمسحت الرسالة دي") : msgPreviewText(last)}`;
     return `<a class="conv ${g.id === activeGroup ? "on" : ""} ${n ? "unread" : ""}" href="#/chat?group=${g.id}">
       ${groupAvatar(g)}
       <span class="conv-main"><span class="conv-top"><b><bdi>${esc(g.name)}</bdi></b>${last ? `<time>${fmtListTime(last.created_at)}</time>` : ""}</span>
@@ -4676,14 +4677,69 @@ async function loadGroups() {
     sb.from("group_messages").select("*").order("created_at", { ascending: false }).limit(3000),
   ]);
   for (const r of [g, m, msgs]) if (r.error) throw r.error;
-  state.groups = (g.data || []).map((x) => ({ ...x, members: (m.data || []).filter((r) => r.group_id === x.id) }));
+  // members = still in the group; allMembers also keeps people who left (they can read the history up to then)
+  state.groups = (g.data || []).map((x) => {
+    const rows = (m.data || []).filter((r) => r.group_id === x.id);
+    return { ...x, allMembers: rows, members: rows.filter((r) => !r.left_at) };
+  });
   state.gmsgs = (msgs.data || []).sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 const groupById = (id) => state.groups.find((g) => g.id === id);
-const myMember = (g) => g?.members.find((m) => m.user_id === state.me.id);
-const isGroupOwner = (g) => myMember(g)?.role === "owner";
+const myMember = (g) => (g?.allMembers || g?.members)?.find((m) => m.user_id === state.me.id);
+const isGroupOwner = (g) => { const me = myMember(g); return me?.role === "owner" && !me.left_at; };
+const groupLeft = (g) => !!myMember(g)?.left_at;
+const groupHasOwner = (g) => g.members.some((m) => m.role === "owner");
+function groupThreadState(g, pane = $("#chat-pane")) {
+  if (!pane) return;
+  const th = $("#thread-msgs", pane), atEnd = th && th.scrollHeight - th.scrollTop - th.clientHeight < 80;
+  requestAnimationFrame(() => { if (th && atEnd) th.scrollTop = th.scrollHeight; });
+  $$(".g-left-note, .g-noadmin", pane).forEach((x) => x.remove());
+  const comp = $("#composer", pane);
+  if (groupLeft(g)) {
+    if (comp) comp.hidden = true;
+    const ap = $("#attach-preview", pane); if (ap) ap.hidden = true;
+    pane.insertAdjacentHTML("beforeend", `<div class="g-left-note">${icon("logout", "sm")}<span>${tx("انت خرجت من المجموعة دي، تقدر تشوف الرسايل القديمة بس")}</span>
+      <button type="button" class="btn sm ghost" id="g-forget">${icon("trash", "sm")}${tx("إزالة من عندي")}</button></div>`);
+    $("#g-forget", pane).onclick = () => forgetGroup(g);
+    return;
+  }
+  if (comp) comp.hidden = false;
+  if (!groupHasOwner(g) && comp) {
+    comp.insertAdjacentHTML("beforebegin", `<div class="g-noadmin">${icon("users", "sm")}<span>${tx("المجموعة من غير مشرف دلوقتي")}</span>
+      <button type="button" class="btn sm primary" id="g-claim">${tx("خليني المشرف")}</button></div>`);
+    $("#g-claim", pane).onclick = async () => {
+      const { error } = await sb.rpc("claim_group_owner", { p_group: g.id });
+      if (error) return toast(/has_owner/.test(error.message) ? tx("المجموعة ليها مشرف خلاص") : friendly(error), true);
+      await loadGroups(); toast(tx("بقيت مشرف المجموعة")); route();
+    };
+  }
+}
+async function forgetGroup(g) {
+  const ok = await confirmDialog({ title: tx("إزالة «{name}» من عندك؟", { name: g.name }), body: tx("المجموعة ورسايلها القديمة هتختفي من قايمتك."), ok: tx("إزالة") });
+  if (!ok) return;
+  const { error } = await sb.rpc("forget_group", { p_group: g.id });
+  if (error) return toast(friendly(error), true);
+  if ($("#modal-root .overlay")) closeModal();
+  await loadGroups(); location.hash = "#/chat"; renderChatBadges();
+}
+// event lines ("Ahmed left the group", …)
+function sysText(m) {
+  const e = m.event || {}, me = state.me.id;
+  const nm = (id) => id === me ? tx("انت") : (profile(id)?.full_name.split(" ")[0] || tx("عضو سابق"));
+  const a = nm(m.sender_id);
+  const iA = m.sender_id === me;
+  switch (e.type) {
+    case "left": return (iA ? tx("انت خرجت من المجموعة") : tx("{a} خرج من المجموعة", { a })) + (e.was_owner && e.no_owner ? " · " + tx("المجموعة من غير مشرف دلوقتي") : "");
+    case "removed": return e.by === me ? tx("انت شلت {a} من المجموعة", { a }) : iA ? tx("{by} شالك من المجموعة", { by: nm(e.by) }) : tx("{by} شال {a} من المجموعة", { by: nm(e.by), a });
+    case "added": return iA ? tx("انت ضفت {who}", { who: (e.users || []).map(nm).join("، ") }) : tx("{a} ضاف {who}", { a, who: (e.users || []).map(nm).join("، ") });
+    case "made_admin": return iA ? tx("انت خلّيت {u} مشرف", { u: nm(e.user) }) : e.user === me ? tx("{a} خلّاك مشرف", { a }) : tx("{a} خلّى {u} مشرف", { a, u: nm(e.user) });
+    case "removed_admin": return iA ? tx("انت شلت الإشراف من {u}", { u: nm(e.user) }) : e.user === me ? tx("{a} شال الإشراف منك", { a }) : tx("{a} شال الإشراف من {u}", { a, u: nm(e.user) });
+    case "claimed": return iA ? tx("انت بقيت مشرف المجموعة") : tx("{a} بقى مشرف المجموعة", { a });
+    default: return "";
+  }
+}
 const groupMsgs = (gid) => { const me = myMember(groupById(gid)); return state.gmsgs.filter((m) => m.group_id === gid && (!me?.cleared_at || m.created_at > me.cleared_at)); };
-const groupUnread = (gid) => { const me = myMember(groupById(gid)); if (!me) return 0; return groupMsgs(gid).filter((m) => m.sender_id !== state.me.id && !m.deleted_at && m.created_at > me.last_read_at).length; };
+const groupUnread = (gid) => { const me = myMember(groupById(gid)); if (!me) return 0; return groupMsgs(gid).filter((m) => m.kind !== "system" && m.sender_id !== state.me.id && !m.deleted_at && m.created_at > me.last_read_at && (!me.left_at || m.created_at <= me.left_at)).length; };
 const groupsUnread = () => state.groups.reduce((s, g) => s + groupUnread(g.id), 0);
 const groupInitials = (name) => name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 const groupAvatar = (g, cls = "") => g.avatar_url
@@ -4724,6 +4780,7 @@ function renderGroupThread(g) {
     </form>`;
   fillGroupThread(g.id, true);
   wireMinimize(pane);
+  groupThreadState(g, pane);
   $("#g-info").onclick = $("#g-info2").onclick = () => openGroupModal(g.id);
   const ta = $("#msg-in"), btn = $(".send-btn", pane);
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
@@ -4751,6 +4808,7 @@ function fillGroupThread(gid, jump = false) {
   for (const m of msgs) {
     const day = new Date(m.created_at).toDateString();
     if (day !== lastDay) { html += `<div class="day-sep"><span>${fmtDay(m.created_at)}</span></div>`; lastDay = day; prev = null; }
+    if (m.kind === "system") { html += `<div class="sys-msg" data-sys="${esc(m.event?.type || "")}"><span>${esc(sysText(m))} · <time>${fmtClock(m.created_at)}</time></span></div>`; prev = null; continue; }
     const mine = m.sender_id === state.me.id;
     const grouped = prev && prev.sender_id === m.sender_id && (new Date(m.created_at) - new Date(prev.created_at)) < 5 * 60000;
     const who = profile(m.sender_id);
@@ -4886,7 +4944,8 @@ function openGroupModal(gid = null) {
         <div class="people-pick">${pickable.map((p) => `<label data-name="${esc(p.full_name.toLowerCase())}"><input type="checkbox" name="member" value="${p.id}">${avatar(p, "sm")}<span>${esc(p.full_name)}</span><small>${esc(p.job_title || "")}</small></label>`).join("")}</div></div>` : ""}
       <p class="err" id="gf-err"></p>
       <div class="modal-foot g-foot">
-        ${g ? `<button type="button" class="btn ghost" id="g-clear">${icon("trash", "sm")}${tx("مسح المحادثة عندي")}</button>
+        ${g && groupLeft(g) ? `<button type="button" class="btn danger ghost" id="g-forget2">${icon("trash", "sm")}${tx("إزالة من عندي")}</button>` : ""}
+        ${g && !groupLeft(g) ? `<button type="button" class="btn ghost" id="g-clear">${icon("trash", "sm")}${tx("مسح المحادثة عندي")}</button>
                <button type="button" class="btn danger ghost" id="g-leave">${icon("logout", "sm")}${tx("خروج من المجموعة")}</button>
                ${owner ? `<button type="button" class="btn danger ghost" id="g-del">${icon("trash", "sm")}${tx("حذف المجموعة")}</button>` : ""}` : ""}
         <span class="spacer"></span>
@@ -4952,14 +5011,17 @@ function openGroupModal(gid = null) {
   });
   const clr = $("#g-clear", ov);
   if (clr) clr.onclick = async () => { closeModal(); await markGroupRead(g.id, true); toast(tx("اتمسحت المحادثة")); route(); };
+  const f2 = $("#g-forget2", ov); if (f2) f2.onclick = () => forgetGroup(g);
   const leave = $("#g-leave", ov);
   if (leave) leave.onclick = async () => {
     closeModal();
-    const ok = await confirmDialog({ title: tx("تخرج من «{name}»؟", { name: g.name }), body: tx("مش هتوصلك رسايل المجموعة تاني، ومحدش يقدر يرجعك غير المشرف."), ok: tx("خروج") });
+    const lastAdmin = isGroupOwner(g) && g.members.filter((m) => m.role === "owner").length === 1 && g.members.length > 1;
+    const ok = await confirmDialog({ title: tx("تخرج من «{name}»؟", { name: g.name }),
+      body: tx("مش هتقدر تكتب في المجموعة تاني، بس هتفضل شايف الرسايل القديمة.") + (lastAdmin ? " " + tx("انت المشرف الوحيد، فأي عضو هيقدر يخلّي نفسه مشرف بعدك.") : ""), ok: tx("خروج") });
     if (!ok) return;
     const { error } = await sb.rpc("remove_group_member", { p_group: g.id, p_user: state.me.id });
     if (error) return toast(friendly(error), true);
-    await loadGroups(); location.hash = "#/chat"; toast(tx("خرجت من المجموعة")); renderChatBadges();
+    await loadGroups(); toast(tx("خرجت من المجموعة")); route(); renderChatBadges();
   };
   const del = $("#g-del", ov);
   if (del) del.onclick = async () => {
@@ -4984,7 +5046,7 @@ function onGroupRealtime(table, evt, row, old) {
       if (m.sender_id === state.me.id && state.gmsgs.some((x) => x._pending && x.body === m.body && x.group_id === m.group_id)) return;
       state.gmsgs.push(m);
       if (openG === m.group_id) { fillGroupThread(m.group_id); markGroupRead(m.group_id); }
-      else if (m.sender_id !== state.me.id) {
+      else if (m.sender_id !== state.me.id && m.kind !== "system") {
         chatHeadPush("g", m.group_id, `${profile(m.sender_id)?.full_name?.split(" ")[0] || ""}: ${msgPreviewText(m)}`, m.sender_id);
       }
     } else if (evt === "UPDATE" && i >= 0) { state.gmsgs[i] = { ...state.gmsgs[i], ...m }; if (openG === m.group_id) fillGroupThread(m.group_id); }
@@ -5003,7 +5065,7 @@ async function groupMetaReload() {
         const gid = rr.params.get("group");
         if (gid && !groupById(gid)) { location.hash = "#/chat"; return; }
         fillConvs(rr.params.get("with"), gid);
-        if (gid) { const g = groupById(gid); const head = $(".g-who"); if (head && g) head.innerHTML = `<b>${esc(g.name)}</b><small>${esc(groupMembersLine(g))}</small>`; }
+        if (gid) { const g = groupById(gid); const head = $(".g-who"); if (head && g) head.innerHTML = `<b>${esc(g.name)}</b><small>${esc(groupMembersLine(g))}</small>`; if (g) groupThreadState(g); }
       }
       renderChatBadges();
     } catch (e) { console.error(e); }
