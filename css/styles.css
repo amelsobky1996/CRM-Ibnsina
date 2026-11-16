@@ -2597,3 +2597,8 @@ body[data-page="chat"] .mini-chat { display: none !important; }
 }
 .mini-chat .thread-head .thread-back, .mini-chat .thread-head .thread-clear { display: none !important; }
 .ch-av .av-default { background: var(--card-2); }
+.thread-min { flex: none; }
+.mini-chat .thread-head .thread-min { display: none !important; }
+.thread-head .thread-min { margin-inline-start: auto; color: var(--ink-3); }
+.thread-head .thread-min:hover { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.thread-head .thread-min + .thread-clear { margin-inline-start: 0; }

@@ -43,6 +43,7 @@ const EN = {
   "القائمة الرئيسية": "Main menu", "المهام": "Tasks", "المشاريع": "Projects", "أداء الفريق": "Team performance",
   "الهيكل التنظيمي": "Org chart", "الموظفين": "Employees", "الإعدادات": "Settings",
   "تغيير صورتي": "Change my photo", "تغيير كلمة السر": "Change password", "تسجيل الخروج": "Sign out", "المزيد": "More",
+  "تصغير لفقاعة": "Minimize to bubble",
   "فتح في المحادثات": "Open in Chats",
   "صورة": "Photo", "ابعت صورة بس (JPG أو PNG)": "Send an image (JPG or PNG)", "الصورة أكبر من 1.5 ميجا": "The image is larger than 1.5 MB", "فتح الصورة": "Open image", "شيل الصورة": "Remove image", "ابعت صورة": "Send a photo", "ابعت صورة (لحد 1.5 ميجا)": "Send a photo (up to 1.5 MB)", "رسالة من {name}": "Message from {name}", "رسالة جديدة": "New message",
   "بتشوف المهمة دي للعرض بس، التعديل والتعليقات للمسؤولين عنها": "You're viewing this task read-only. Editing and comments are for the people on it.",

@@ -703,17 +703,29 @@ function renderLogin(message = "") {
 /* ---------- Messenger-style chat heads above the floating button ---------- */
 const chatHeads = []; // newest first: { key, kind, id, count, text }
 let peekTimer = 0;
-function chatHeadPush(kind, id, text, from) {
+function chatHeadPush(kind, id, text, from, quiet = false) {
   const key = kind + ":" + id;
   let h = chatHeads.find((x) => x.key === key);
   const isNew = !h;
-  if (h) { h.count++; h.text = text; chatHeads.splice(chatHeads.indexOf(h), 1); }
-  else h = { key, kind, id, count: 1, text };
+  if (h) { if (!quiet) { h.count++; h.text = text; } chatHeads.splice(chatHeads.indexOf(h), 1); }
+  else h = { key, kind, id, count: quiet ? 0 : 1, text };
   h.from = from;
   chatHeads.unshift(h);
   while (chatHeads.length > 4) chatHeads.pop();
-  navigator.vibrate?.(25);
-  renderChatHeads(key, isNew);
+  if (!quiet) navigator.vibrate?.(25);
+  renderChatHeads(key, isNew, quiet);
+}
+// chat page → back to where you were, with this conversation waiting as a bubble
+function wireMinimize(pane) {
+  const b = $(".thread-min", pane); if (!b) return;
+  b.onclick = () => {
+    const [kind, id] = b.dataset.min.split(":");
+    const last = kind === "g" ? groupMsgs(id).filter((m) => !m.deleted_at).slice(-1)[0] : visibleMsgs().filter((m) => partnerOf(m) === id && !m.deleted_at).slice(-1)[0];
+    const text = last ? (kind === "g" ? `${profile(last.sender_id)?.full_name?.split(" ")[0] || ""}: ` : "") + msgPreviewText(last) : "";
+    const back = state.lastNonChat && !state.lastNonChat.startsWith("#/chat") ? state.lastNonChat : "#/home";
+    location.hash = back;
+    setTimeout(() => chatHeadPush(kind, id, text, null, true), 60);
+  };
 }
 function chatHeadRemove(key, animate = true) {
   const i = chatHeads.findIndex((x) => x.key === key);
@@ -733,7 +745,7 @@ function chatHeadHtml(h) {
       <span class="ch-peek"><b>${esc(name)}</b><span dir="auto">${esc(h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text)}</span></span>
     </div>`;
 }
-function renderChatHeads(changedKey, isNew) {
+function renderChatHeads(changedKey, isNew, quiet = false) {
   const box = $("#chat-heads"); if (!box) return;
   // keep existing nodes (their animations), add/update/reorder
   for (const h of chatHeads) {
@@ -754,7 +766,7 @@ function renderChatHeads(changedKey, isNew) {
   syncHeadsActive();
   // preview bubble on the newest head for a few seconds
   $$(".ch-head.peek", box).forEach((el) => el.classList.remove("peek"));
-  const el = changedKey && $(`[data-key="${CSS.escape(changedKey)}"]`, box);
+  const el = !quiet && changedKey && $(`[data-key="${CSS.escape(changedKey)}"]`, box);
   if (el) { el.classList.add("peek"); clearTimeout(peekTimer); peekTimer = setTimeout(() => el.classList.remove("peek"), 5200); }
 }
 /* a small chat window that opens beside the heads (Messenger style) */
@@ -1088,6 +1100,7 @@ function route() {
   if (!state.me || !$("#view")) return;
   const { page, params } = currentRoute();
   document.body.dataset.page = page;
+  if (page !== "chat") state.lastNonChat = location.hash;
   if (page === "chat") closeMiniChat(false);
   if (page === "chat") { const w = params.get("with"), g = params.get("group"); if (w) chatHeadRemove("u:" + w); if (g) chatHeadRemove("g:" + g); }
   renderNav();
@@ -3640,6 +3653,7 @@ function renderThread(p) {
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${avatar(p)}
       <div class="thread-who" data-pid="${p.id}"><b>${esc(p.full_name)}</b><small>${esc(p.job_title || "")}</small></div>
+      <button class="icon-btn thread-min" data-min="u:${p.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minus")}</button>
       <button class="icon-btn thread-clear" id="thread-clear" title="مسح المحادثة عندي" aria-label="مسح المحادثة عندي">${icon("trash")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
@@ -3650,6 +3664,7 @@ function renderThread(p) {
       <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
     </form>`;
   fillThread(p.id, true);
+  wireMinimize(pane);
   $("#thread-clear").onclick = async () => {
     if (!visibleMsgs().some((m) => partnerOf(m) === p.id)) return toast(tx("المحادثة فاضية أصلاً"));
     const ok = await confirmDialog({ title: tx("مسح المحادثة مع {name}؟", { name: p.full_name }), body: tx("الرسايل هتتمسح عندك انت بس، و{name} هيفضل شايفها.", { name: p.full_name.split(" ")[0] }), ok: "مسح" });
@@ -4482,6 +4497,7 @@ function renderGroupThread(g) {
       <a class="icon-btn thread-back" href="#/chat" aria-label="رجوع">${icon("chev")}</a>
       ${groupAvatar(g)}
       <button class="thread-who g-who" id="g-info" title="${tx("بيانات المجموعة")}"><b>${esc(g.name)}</b><small>${esc(groupMembersLine(g))}</small></button>
+      <button class="icon-btn thread-min" data-min="g:${g.id}" title="${tx("تصغير لفقاعة")}" aria-label="${tx("تصغير لفقاعة")}">${icon("minus")}</button>
       <button class="icon-btn thread-clear" id="g-info2" title="${tx("بيانات المجموعة")}" aria-label="${tx("بيانات المجموعة")}">${icon("users")}</button>
     </header>
     <div class="thread-msgs" id="thread-msgs" aria-live="polite"></div>
@@ -4492,6 +4508,7 @@ function renderGroupThread(g) {
       <button class="btn primary send-btn" type="submit" aria-label="إرسال" ${draft.trim() ? "" : "disabled"}>${icon("send")}</button>
     </form>`;
   fillGroupThread(g.id, true);
+  wireMinimize(pane);
   $("#g-info").onclick = $("#g-info2").onclick = () => openGroupModal(g.id);
   const ta = $("#msg-in"), btn = $(".send-btn", pane);
   const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; };
